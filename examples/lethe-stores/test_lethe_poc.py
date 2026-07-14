@@ -43,6 +43,8 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.store, "postgres-pgvector")
         command = compose.calls[0][1]
         self.assertIn("--set=subject_b64=dXNlcjox", command)
+        self.assertNotIn("--command", command)
+        self.assertIn(":'subject_b64'", compose.calls[0][2])
 
     def test_redis_subject_index_does_not_expose_the_subject(self):
         index = lethe_poc.RedisStore._subject_index("user:private")

@@ -163,8 +163,7 @@ class PostgresStore:
             "--field-separator=|",
             "--set=ON_ERROR_STOP=1",
             *variable_args,
-            "--command",
-            sql,
+            input_text=sql,
         )
 
     def setup(self) -> None:
