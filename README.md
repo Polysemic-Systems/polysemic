@@ -57,10 +57,25 @@ answer through a separate ledger. Strata prints provenance, flags distribution
 drift, and diffs ontology versions. Lethe remembers under a named policy,
 prunes on schedule, and produces sweep and erasure receipts.
 
+## Lethe in five minutes: two real stores
+
+With Docker and Python 3 installed, run:
+
+```sh
+python3 examples/lethe-stores/lethe_poc.py demo
+```
+
+The dependency-free POC starts PostgreSQL+pgvector and Redis, writes the same
+subject to both, erases it from both, verifies unrelated data survived, and
+prints an independent SHA-256 receipt per store. See the
+[`examples/lethe-stores` quickstart](examples/lethe-stores/README.md) and the
+[`store-selection` evidence](docs/store-selection.md).
+
 ## Honest limitations
 
 This is a working skeleton, not a product: the schema language is small on
-purpose, receipt hashes use FNV-1a (swap in a cryptographic hash for anything
-real), `lethe` is in-memory, ontology definitions are compared structurally
-rather than with embeddings, and the repair passes are heuristic scanners,
-not a grammar. The seams where you'd extend them are marked in the doc comments.
+purpose, core receipt hashes use FNV-1a (the store POC uses SHA-256), the Lethe
+store adapters shell into dedicated local containers rather than native client
+libraries, ontology definitions are compared structurally rather than with
+embeddings, and the repair passes are heuristic scanners, not a grammar. The
+seams where you'd extend them are marked in the doc comments.

@@ -1,0 +1,17 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS lethe_memories (
+    id text PRIMARY KEY,
+    subject text NOT NULL,
+    content text NOT NULL,
+    embedding vector(3),
+    retention_policy text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX IF NOT EXISTS lethe_memories_subject_idx
+    ON lethe_memories (subject);
+
+CREATE INDEX IF NOT EXISTS lethe_memories_expires_at_idx
+    ON lethe_memories (expires_at);

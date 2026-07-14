@@ -1,0 +1,35 @@
+name: lethe-stores-poc
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg16
+    environment:
+      POSTGRES_DB: lethe
+      POSTGRES_USER: lethe
+      POSTGRES_PASSWORD: lethe-local-only
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lethe -d lethe"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - lethe-postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4.9-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - lethe-redis:/data
+
+volumes:
+  lethe-postgres:
+  lethe-redis:
