@@ -1,0 +1,9 @@
+[package]
+name = "digest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The seam layer. Ambiguity digested, not thrown."
+
+[dependencies]
+polysemic-core = { path = "../polysemic-core" }

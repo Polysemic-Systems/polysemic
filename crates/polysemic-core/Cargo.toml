@@ -1,0 +1,9 @@
+[package]
+name = "polysemic-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared value model and strict JSON parser. The univocal interior."
+
+[dependencies]
+# none. nothing to hoard.

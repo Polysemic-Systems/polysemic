@@ -1,0 +1,16 @@
+[package]
+name = "seam-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The hero terminal, live: one messy model output through all three organs."
+
+[dependencies]
+polysemic-core = { path = "../polysemic-core" }
+digest = { path = "../digest" }
+strata = { path = "../strata" }
+lethe = { path = "../lethe" }
+
+[[bin]]
+name = "seam-demo"
+path = "src/main.rs"

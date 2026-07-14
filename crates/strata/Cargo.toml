@@ -1,0 +1,9 @@
+[package]
+name = "strata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Ontology observability. Know whose history your model holds."
+
+[dependencies]
+# none.

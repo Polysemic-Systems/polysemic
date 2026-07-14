@@ -1,0 +1,9 @@
+[package]
+name = "lethe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The delete path. Forgetting is a faculty, not a failure."
+
+[dependencies]
+# none. it would be embarrassing for the forgetting crate to hoard.

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/polysemic-core",
+    "crates/digest",
+    "crates/strata",
+    "crates/lethe",
+    "crates/seam-demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["polysemic.systems"]
