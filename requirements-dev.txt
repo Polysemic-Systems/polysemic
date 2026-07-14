@@ -1,0 +1,3 @@
+# Versions match the tools used to validate the initial store POC.
+black==26.5.1
+ruff==0.15.21

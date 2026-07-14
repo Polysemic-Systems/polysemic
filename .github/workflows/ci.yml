@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Rust, Python, and store integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_TERM_COLOR: always
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Show toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+          python3 --version
+          docker compose version
+
+      - name: Install pinned Python quality tools
+        run: python3 -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Test Rust workspace
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test Lethe store adapters
+        run: >-
+          python3 -m unittest discover
+          -s examples/lethe-stores
+          -p 'test_*.py'
+          -v
+
+      - name: Check Python lint and formatting
+        run: |
+          ruff check examples/lethe-stores
+          black --check --workers 1 examples/lethe-stores
+
+      - name: Validate store Compose definition
+        run: docker compose -f examples/lethe-stores/compose.yaml config --quiet
+
+      - name: Run PostgreSQL and Redis erasure proof
+        run: python3 examples/lethe-stores/lethe_poc.py demo
+
+      - name: Remove store containers and volumes
+        if: always()
+        run: python3 examples/lethe-stores/lethe_poc.py destroy

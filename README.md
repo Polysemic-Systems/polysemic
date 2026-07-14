@@ -1,5 +1,7 @@
 # polysemic
 
+[![CI](https://github.com/Polysemic-Systems/polysemic/actions/workflows/ci.yml/badge.svg)](https://github.com/Polysemic-Systems/polysemic/actions/workflows/ci.yml)
+
 Infrastructure for systems that are alive. Three organs, zero dependencies.
 
 > Digest the contradiction. Own the sediment. Bless the delete key.
