@@ -1,0 +1,14 @@
+[package]
+name = "strata-poc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A provenance and ontology-drift proof for Strata."
+
+[dependencies]
+polysemic-core = { path = "../polysemic-core" }
+strata = { path = "../strata" }
+
+[[bin]]
+name = "strata-poc"
+path = "src/main.rs"

@@ -1,0 +1,4 @@
+corpus=archived-support-tickets
+vintage=2018-01..2019-12
+tokens=12500000
+annotator_labor=uncredited

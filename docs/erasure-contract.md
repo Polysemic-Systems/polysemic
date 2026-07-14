@@ -69,6 +69,9 @@ change the aggregate receipt.
 PostgreSQL stores successful results in `lethe_erasure_requests`. Redis stores
 them under a hashed `lethe:erasure:*` key.
 
+- Before deletion, each adapter atomically reserves the request ID for the
+  subject commitment. A concurrent request for another subject therefore loses
+  before it can touch that subject's data.
 - Replaying the same request ID for the same subject returns the original result.
 - Reusing it for another subject produces an `IdempotencyConflict` failure.
 - Every replay queries the store again. If new memory appeared after the original
@@ -77,8 +80,9 @@ them under a hashed `lethe:erasure:*` key.
 
 ## POC atomicity boundary
 
-Deletion and result-ledger persistence are separate client operations in this
-POC. A process crash between them can delete data without preserving the
-original receipt. Production adapters must combine those operations atomically
-or persist a recoverable intent before deletion. Replicas, WAL/AOF, snapshots,
-exports, object storage, and backups remain separate erasure participants.
+Reservation, deletion, and result-ledger persistence are separate client
+operations in this POC. A process crash can leave a visible pending reservation
+or delete data without preserving the original receipt. Production adapters
+must make that state machine recoverable and commit deletion evidence
+atomically. Replicas, WAL/AOF, snapshots, exports, object storage, and backups
+remain separate erasure participants.

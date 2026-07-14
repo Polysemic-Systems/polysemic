@@ -23,6 +23,7 @@ from lethe_contract import (
     DeletedRecord as DeletedMemory,
     ErasureCoordinator,
     IdempotencyConflict,
+    ReportStatus,
     StoreErasureResult,
     build_store_result,
     subject_commitment,
@@ -250,7 +251,8 @@ class PostgresStore:
             )
             FROM lethe_erasure_requests
             WHERE store = :'store'
-              AND request_id = convert_from(decode(:'request_id_b64', 'base64'), 'UTF8');
+              AND request_id = convert_from(decode(:'request_id_b64', 'base64'), 'UTF8')
+              AND result_json IS NOT NULL;
             """,
             store=self.STORE_NAME,
             request_id_b64=_b64(request_id),
@@ -261,33 +263,90 @@ class PostgresStore:
         _validate_replay(result, self.STORE_NAME, request_id, subject)
         return result
 
-    def _save_erasure(
-        self, subject: str, result: StoreErasureResult
-    ) -> StoreErasureResult:
-        self._psql(
+    def _reserve_erasure(
+        self, subject: str, request_id: str
+    ) -> tuple[StoreErasureResult | None, str]:
+        subject_digest = subject_commitment(subject)
+        reservation_token = str(uuid.uuid4())
+        output = self._psql(
             """
             INSERT INTO lethe_erasure_requests
-                (store, request_id, subject_digest, result_json)
+                (store, request_id, subject_digest, reservation_token)
             VALUES (
                 :'store',
                 convert_from(decode(:'request_id_b64', 'base64'), 'UTF8'),
                 :'subject_digest',
-                convert_from(decode(:'result_b64', 'base64'), 'UTF8')
+                :'reservation_token'
             )
             ON CONFLICT (store, request_id) DO NOTHING;
+
+            SELECT
+                subject_digest,
+                COALESCE(
+                    replace(
+                        encode(convert_to(result_json, 'UTF8'), 'base64'),
+                        E'\n',
+                        ''
+                    ),
+                    ''
+                ),
+                COALESCE(reservation_token, '')
+            FROM lethe_erasure_requests
+            WHERE store = :'store'
+              AND request_id = convert_from(decode(:'request_id_b64', 'base64'), 'UTF8');
+            """,
+            store=self.STORE_NAME,
+            request_id_b64=_b64(request_id),
+            subject_digest=subject_digest,
+            reservation_token=reservation_token,
+        ).strip()
+        fields = output.split("|")
+        if len(fields) != 3:
+            raise StoreCommandError(f"unexpected PostgreSQL reservation: {output!r}")
+        stored_digest, result_b64, owner = fields
+        if stored_digest != subject_digest:
+            raise IdempotencyConflict("request ID belongs to a different subject")
+        if result_b64:
+            result = StoreErasureResult.from_json(_from_b64(result_b64))
+            _validate_replay(result, self.STORE_NAME, request_id, subject)
+            return result, reservation_token
+        if owner != reservation_token:
+            raise StoreCommandError("erasure request is already in progress")
+        return None, reservation_token
+
+    def _save_erasure(
+        self, subject: str, result: StoreErasureResult, reservation_token: str
+    ) -> StoreErasureResult:
+        output = self._psql(
+            """
+            UPDATE lethe_erasure_requests
+            SET result_json = convert_from(decode(:'result_b64', 'base64'), 'UTF8'),
+                reservation_token = NULL
+            WHERE store = :'store'
+              AND request_id = convert_from(decode(:'request_id_b64', 'base64'), 'UTF8')
+              AND subject_digest = :'subject_digest'
+              AND reservation_token = :'reservation_token'
+              AND result_json IS NULL
+            RETURNING replace(
+                encode(convert_to(result_json, 'UTF8'), 'base64'),
+                E'\n',
+                ''
+            );
             """,
             store=self.STORE_NAME,
             request_id_b64=_b64(result.request_id),
             subject_digest=result.subject_digest,
+            reservation_token=reservation_token,
             result_b64=_b64(result.to_json()),
-        )
-        winner = self._load_erasure(subject, result.request_id)
-        if winner is None:
+        ).strip()
+        if not output:
             raise StoreCommandError("PostgreSQL did not persist the erasure result")
+        winner = StoreErasureResult.from_json(_from_b64(output))
+        _validate_replay(winner, self.STORE_NAME, result.request_id, subject)
         return winner
 
     def erase_subject(self, subject: str, request_id: str) -> StoreErasureResult:
-        existing = self._load_erasure(subject, request_id)
+        existing, reservation_token = self._reserve_erasure(subject, request_id)
         if existing is not None:
             return existing
         output = self._psql(
@@ -313,7 +372,7 @@ class PostgresStore:
             _parse_deleted(output),
             verified_absent=self.verify_subject_absent(subject),
         )
-        return self._save_erasure(subject, result)
+        return self._save_erasure(subject, result, reservation_token)
 
     def forget_subject(
         self, subject: str, request_id: str | None = None
@@ -415,12 +474,27 @@ return result
 """.strip()
 
 REDIS_SAVE_ERASURE_LUA = """
-if redis.call('EXISTS', KEYS[1]) == 0 then
-  redis.call('HSET', KEYS[1],
-    'subject_digest', ARGV[1],
-    'result_b64', ARGV[2])
+if redis.call('HGET', KEYS[1], 'reservation_token') == ARGV[1]
+  and not redis.call('HGET', KEYS[1], 'result_b64') then
+  redis.call('HSET', KEYS[1], 'result_b64', ARGV[2])
+  redis.call('HDEL', KEYS[1], 'reservation_token')
 end
 return redis.call('HGET', KEYS[1], 'result_b64')
+""".strip()
+
+REDIS_RESERVE_ERASURE_LUA = """
+local digest = redis.call('HGET', KEYS[1], 'subject_digest')
+if digest then
+  return {
+    digest,
+    redis.call('HGET', KEYS[1], 'result_b64') or '',
+    redis.call('HGET', KEYS[1], 'reservation_token') or ''
+  }
+end
+redis.call('HSET', KEYS[1],
+  'subject_digest', ARGV[1],
+  'reservation_token', ARGV[2])
+return {ARGV[1], '', ARGV[2]}
 """.strip()
 
 
@@ -483,23 +557,41 @@ class RedisStore:
             raise StoreCommandError(f"Redis returned unexpected key: {lines!r}")
         return memory_id
 
-    def _load_erasure(self, subject: str, request_id: str) -> StoreErasureResult | None:
-        lines = self._redis("HGET", self._erasure_key(request_id), "result_b64")
-        if not lines or not lines[0]:
-            return None
-        result = StoreErasureResult.from_json(_from_b64(lines[0]))
-        _validate_replay(result, self.STORE_NAME, request_id, subject)
-        return result
+    def _reserve_erasure(
+        self, subject: str, request_id: str
+    ) -> tuple[StoreErasureResult | None, str]:
+        subject_digest = subject_commitment(subject)
+        reservation_token = str(uuid.uuid4())
+        lines = self._redis(
+            "EVAL",
+            REDIS_RESERVE_ERASURE_LUA,
+            "1",
+            self._erasure_key(request_id),
+            subject_digest,
+            reservation_token,
+        )
+        if len(lines) != 3:
+            raise StoreCommandError(f"unexpected Redis reservation: {lines!r}")
+        stored_digest, result_b64, owner = lines
+        if stored_digest != subject_digest:
+            raise IdempotencyConflict("request ID belongs to a different subject")
+        if result_b64:
+            result = StoreErasureResult.from_json(_from_b64(result_b64))
+            _validate_replay(result, self.STORE_NAME, request_id, subject)
+            return result, reservation_token
+        if owner != reservation_token:
+            raise StoreCommandError("erasure request is already in progress")
+        return None, reservation_token
 
     def _save_erasure(
-        self, subject: str, result: StoreErasureResult
+        self, subject: str, result: StoreErasureResult, reservation_token: str
     ) -> StoreErasureResult:
         lines = self._redis(
             "EVAL",
             REDIS_SAVE_ERASURE_LUA,
             "1",
             self._erasure_key(result.request_id),
-            result.subject_digest,
+            reservation_token,
             _b64(result.to_json()),
         )
         if len(lines) != 1 or not lines[0]:
@@ -509,7 +601,7 @@ class RedisStore:
         return winner
 
     def erase_subject(self, subject: str, request_id: str) -> StoreErasureResult:
-        existing = self._load_erasure(subject, request_id)
+        existing, reservation_token = self._reserve_erasure(subject, request_id)
         if existing is not None:
             return existing
         lines = self._redis(
@@ -526,7 +618,7 @@ class RedisStore:
             _parse_redis_deleted(lines),
             verified_absent=self.verify_subject_absent(subject),
         )
-        return self._save_erasure(subject, result)
+        return self._save_erasure(subject, result, reservation_token)
 
     def forget_subject(
         self, subject: str, request_id: str | None = None
@@ -604,6 +696,8 @@ def run_demo(compose: Compose) -> None:
 
     replay = coordinator.erase_subject(subject, request_id)
     idempotent = replay == report
+    conflict = coordinator.erase_subject("user:kept", request_id)
+    conflict_protected = conflict.status is ReportStatus.FAILED
     complete = report.complete and all(
         result.erased == len(memories) for result in report.stores
     )
@@ -613,8 +707,14 @@ def run_demo(compose: Compose) -> None:
     unrelated_survives = unrelated_survives and redis.count_subject("user:kept") == 1
     print(f"\nCross-store erasure complete: {'yes' if complete else 'NO'}")
     print(f"Idempotent request replay: {'yes' if idempotent else 'NO'}")
+    print(f"Conflicting subject protected: {'yes' if conflict_protected else 'NO'}")
     print(f"Unrelated memory preserved: {'yes' if unrelated_survives else 'NO'}")
-    if not complete or not idempotent or not unrelated_survives:
+    if (
+        not complete
+        or not idempotent
+        or not conflict_protected
+        or not unrelated_survives
+    ):
         raise StoreCommandError("the cross-store deletion invariant failed")
 
 

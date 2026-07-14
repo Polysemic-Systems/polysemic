@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>polysemic.systems — infrastructure for systems that are alive</title>
+<meta name="description" content="Digest, Strata, and Lethe: the metabolism, sediment, and forgetting layer for AI systems.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  .hero{padding:76px 0 0}
+  .hero .eyebrow{display:block;margin-bottom:24px}
+  .hero h1{max-width:16ch}
+  .hero .sub{margin-top:26px}
+  .hero-cta{display:flex;gap:16px;flex-wrap:wrap;margin-top:34px}
+  .hero .term{margin-top:56px;box-shadow:8px 8px 0 rgba(237,77,139,.28)}
+  .term-bar{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid rgba(242,241,234,.15);align-items:center}
+  .term-bar .dotc{width:10px;height:10px;border-radius:50%}
+  .term-bar .d1{background:var(--pink)}.term-bar .d2{background:var(--blue)}.term-bar .d3{background:#E8E7DF;opacity:.4}
+  .term-bar .t-title{margin-left:auto;font-size:.72rem;color:rgba(232,231,223,.5);letter-spacing:.08em}
+  .thesis{padding:64px 0;border-bottom:1px solid var(--hairline)}
+  .thesis p.big{font-family:var(--display);font-weight:600;letter-spacing:-.015em;font-size:clamp(1.3rem,2.8vw,1.9rem);line-height:1.25;max-width:34ch}
+  .thesis .hl-p{box-shadow:inset 0 -0.45em 0 rgba(237,77,139,.35)}
+  .thesis .hl-b{box-shadow:inset 0 -0.45em 0 rgba(43,63,196,.28)}
+  .thesis .fine{margin-top:18px;font-size:1.05rem;color:var(--ink-soft);max-width:56ch}
+  .products{padding:80px 0 20px}
+  .products h2{margin-bottom:56px}
+  .product{border-top:1px solid var(--hairline)}
+  .p-name{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+  .p-name h3{font-family:var(--display);font-weight:800;font-size:clamp(1.9rem,4vw,2.6rem);letter-spacing:-.02em}
+  .p-name h3 a{text-decoration:none}
+  .p-name h3 a:hover{color:var(--blue)}
+  .p-tag{font-style:italic;font-size:1.15rem;margin-bottom:16px}
+  .p-more{font-family:var(--mono);font-size:.82rem;font-weight:600;margin-top:16px;display:inline-block;color:var(--blue);text-decoration-color:var(--pink);text-underline-offset:4px}
+  .band{padding:84px 0}
+  .band h2{margin:14px 0 44px;max-width:24ch}
+  .m-link{display:inline-block;margin-top:26px;font-family:var(--mono);font-size:.85rem;color:var(--paper);text-decoration-color:var(--pink);text-underline-offset:4px}
+  .deaths{padding:84px 0 30px}
+  .deaths h2{margin:12px 0 44px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html">Digest</a>
+      <a href="strata.html">Strata</a>
+      <a href="lethe.html">Lethe</a>
+      <a href="docs.html">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="docs.html">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="wrap">
+      <span class="eyebrow">Digest · Strata · Lethe</span>
+      <h1 class="display">Infrastructure for systems that are
+        <span class="op"><i class="p" aria-hidden="true">alive.</i><i class="b" aria-hidden="true">alive.</i>alive.</span>
+      </h1>
+      <p class="sub lede">Your stack was built to refuse ambiguity. Your models run on it. We build the three organs every AI system is missing: <strong>a metabolism for ambiguity, a label for its history, and a way to forget.</strong></p>
+      <div class="hero-cta">
+        <a class="btn" href="docs.html">Start building</a>
+        <a class="btn ghost" href="#products">See the products</a>
+      </div>
+
+      <div class="term" role="img" aria-label="Terminal showing model output being digested instead of crashing">
+        <div class="term-bar"><span class="dotc d1"></span><span class="dotc d2"></span><span class="dotc d3"></span><span class="t-title">production — before / after</span></div>
+        <div class="term-body">
+<span class="c">// before: the seam where every AI product dies</span><br>
+<span class="k">const</span> order = JSON.<span class="f">parse</span>(model.output)  <span class="c">// ✕ SyntaxError, 3:12 AM, pager</span><br>
+<br>
+<span class="c">// after: ambiguity digested, not thrown</span><br>
+<span class="k">let</span> digestion = <span class="f">digest</span>(&model_output, &schema)?<br>
+&nbsp;&nbsp;<span class="c">→ repaired: stripped fence, requoted strings, trailing comma</span><br>
+&nbsp;&nbsp;<span class="c">→ clarify: $.qty — <span class="s">"2 or 3"</span> holds two readings [2 | 3]</span><br>
+&nbsp;&nbsp;<span class="ok">✓ 0 exceptions, 1 clarifying question, no coin flips</span>
+        </div>
+      </div>
+    </div>
+    <div class="strata-rule" aria-hidden="true" style="margin-top:72px"><span class="s1"></span><span class="s2"></span><span class="s3"></span></div>
+  </section>
+
+  <section class="thesis">
+    <div class="wrap">
+      <p class="big">Every AI system drifts toward one of three deaths: <span class="hl-p">the hoarder</span>, <span class="hl-b">the amnesiac</span>, or the museum.</p>
+      <p class="fine">A living system needs all three organs — metabolism, sediment, excretion. Current stacks ship with the first by accident, the second unlabeled, and the third not at all. That's the product line.</p>
+    </div>
+  </section>
+
+  <section class="products" id="products">
+    <div class="wrap">
+      <span class="eyebrow">Three products · one organism</span>
+      <h2 class="display">The organs your stack is missing.</h2>
+
+      <div class="split product reveal">
+        <div class="s-text">
+          <div class="p-name"><h3><a href="digest.html">Digest</a></h3><span class="organ-stamp pk" style="margin:0">Metabolism</span></div>
+          <p class="p-tag">The seam layer. Never crash on ambiguity again.</p>
+          <p>Digest sits where probabilistic output meets deterministic infrastructure — <strong>validating, repairing, and reconciling</strong> model output, and escalating to a human question only when meaning genuinely can't be resolved.</p>
+          <div class="p-links">
+            <a class="p-more" href="digest.html">Explore Digest →</a>
+            <a class="p-more" href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/digest-poc" target="_blank" rel="noreferrer">Run the POC ↗</a>
+          </div>
+        </div>
+        <aside class="s-code codecard">
+          <div class="cc-bar"><span>seam.rs</span><span class="lang">digest</span></div>
+          <pre><span class="kw">let</span> d = <span class="fn">digest</span>(raw, &schema)?;
+
+<span class="kw">match</span> d.outcome {
+    Outcome::<span class="fn">Resolved</span>(v) => commit(v),
+    Outcome::<span class="fn">Clarify</span>(qs) => ask(qs),
+}
+<span class="cm">// there is no third state where you got</span>
+<span class="cm">// a value you can't trust.</span></pre>
+        </aside>
+      </div>
+
+      <div class="split flip product reveal">
+        <div class="s-text">
+          <div class="p-name"><h3><a href="strata.html">Strata</a></h3><span class="organ-stamp bl" style="margin:0">Sediment</span></div>
+          <p class="p-tag">Ontology observability. Know whose history your model holds.</p>
+          <p>Provenance envelopes keep committed corpus history attached to versioned ontologies. Snapshot comparison names structural changes, while replaying the same case exposes a <strong>changed classification and route</strong>.</p>
+          <div class="p-links">
+            <a class="p-more" href="strata.html">Explore Strata →</a>
+            <a class="p-more" href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/strata-poc" target="_blank" rel="noreferrer">Run the POC ↗</a>
+          </div>
+        </div>
+        <aside class="s-code codecard">
+          <div class="cc-bar"><span>snapshot.rs</span><span class="lang">strata</span></div>
+          <pre><span class="kw">let</span> drift = baseline.<span class="fn">compare</span>(
+    &observed, <span class="st">"nuclear"</span>
+)?;
+
+<span class="cm">// ontology: +chosen -single_parent ~nuclear</span>
+<span class="cm">// both corpus histories remain attached</span>
+<span class="kw">assert!</span>(drift.probe.<span class="fn">changed</span>());</pre>
+        </aside>
+      </div>
+
+      <div class="split product reveal">
+        <div class="s-text">
+          <div class="p-name"><h3><a href="lethe.html">Lethe</a></h3><span class="organ-stamp ik" style="margin:0">Excretion</span></div>
+          <p class="p-tag">The delete path, as a product. Forgetting is a faculty, not a failure.</p>
+          <p>Memory lifecycle for agents — <strong>TTLs, salience decay, scheduled sweeps</strong> — plus coordinated erasure across PostgreSQL+pgvector and Redis with independently verified receipts.</p>
+          <div class="p-links">
+            <a class="p-more" href="lethe.html">Explore Lethe →</a>
+            <a class="p-more" href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/lethe-stores" target="_blank" rel="noreferrer">Run the POC ↗</a>
+          </div>
+        </div>
+        <aside class="s-code codecard">
+          <div class="cc-bar"><span>memory.rs</span><span class="lang">lethe</span></div>
+          <pre><span class="kw">let</span> receipt = memory.<span class="fn">forget</span>(|m| m.subject == <span class="st">"user:8842"</span>);
+<span class="cm">// ✓ 2 memories released — lethe://era/f3a9…</span>
+<span class="cm"><span class="strike">// TODO: keep everything forever, just in case</span></span></pre>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="band ink-band" id="manifesto-teaser">
+    <div class="wrap">
+      <span class="eyebrow">Why we build this way</span>
+      <h2 class="display">While there is value in the items on the right, we build for the items on the left.</h2>
+      <div class="values">
+        <div class="value reveal"><span class="left">Ambiguity held</span><span class="over">over</span><span class="right">ambiguity refused</span></div>
+        <div class="value reveal"><span class="left">Sediment named</span><span class="over">over</span><span class="right">schema worshipped</span></div>
+        <div class="value reveal"><span class="left">Forgetting designed</span><span class="over">over</span><span class="right">memory hoarded</span></div>
+        <div class="value reveal"><span class="left">Beginning again</span><span class="over">over</span><span class="right">preserving everything</span></div>
+      </div>
+      <a class="m-link" href="manifesto.html">Read the full manifesto →</a>
+    </div>
+  </section>
+
+  <section class="deaths">
+    <div class="wrap">
+      <span class="eyebrow">Diagnostic</span>
+      <h2 class="display">Which death is your system dying?</h2>
+      <div class="card-grid">
+        <div class="card reveal">
+          <h3>The Hoarder</h3>
+          <span class="sym">symptoms: context bloat · unremovable data · agents calcified around stale state</span>
+          <p>Metabolism and sediment, no excretion. Every stress retained as scar tissue; every past decision still claiming a vote.</p>
+          <p class="rx">℞ <a href="lethe.html">Lethe</a></p>
+        </div>
+        <div class="card reveal">
+          <h3>The Amnesiac</h3>
+          <span class="sym">symptoms: every session a first session · gains that evaporate · no compounding</span>
+          <p>Metabolism and forgetting, no sediment. The system survives its stresses and learns nothing from them.</p>
+          <p class="rx">℞ <a href="strata.html">Strata</a></p>
+        </div>
+        <div class="card reveal">
+          <h3>The Museum</h3>
+          <span class="sym">symptoms: pristine schemas · brittle seams · crashes on the first real user</span>
+          <p>Sediment and curation, no metabolism. Formally clean, developmentally dead — guarded by a parser that throws.</p>
+          <p class="rx">℞ <a href="digest.html">Digest</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta wrap" id="get-started">
+    <div class="cta-box reveal">
+      <h2>Give your system all three organs.</h2>
+      <p>Three open-source cores and executable POCs are available today. A hosted control plane is a roadmap, not a shipping claim.</p>
+      <div class="row">
+        <span class="install-line" style="margin:0"><span class="dollar">$</span> cargo run --quiet -p seam-demo</span>
+        <a class="btn" href="docs.html">Read the docs</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing | polysemic.systems</title>
+<meta name="description" content="Open-source Digest, Strata, and Lethe proofs, plus the proposed control-plane roadmap.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html">Digest</a>
+      <a href="strata.html">Strata</a>
+      <a href="lethe.html">Lethe</a>
+      <a href="docs.html">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html" aria-current="page">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="docs.html">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow">Pricing</span>
+      <h1 class="display">The cores are open. The control plane is a roadmap.</h1>
+      <p class="lede">Digest, Strata, and Lethe are available today as open-source cores and executable proofs. <strong>No hosted control plane is generally available yet.</strong> The capabilities below describe the design-partner roadmap, not a shipping service.</p>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <div class="tiers">
+
+      <div class="tier reveal">
+        <h3>Seed</h3>
+        <p class="price">$0 <small>open source</small></p>
+        <p style="color:var(--ink-soft);font-size:.98rem">The three open-source cores, std-only, MIT licensed. Everything the manifesto promises, self-hosted.</p>
+        <ul>
+          <li>Digest, Strata, Lethe crates</li>
+          <li>All repair passes &amp; the full ledger</li>
+          <li>Runnable Digest, Strata, and durable-store Lethe proofs</li>
+          <li>Community support</li>
+        </ul>
+        <a class="btn ghost" href="docs.html">Clone &amp; run the POCs</a>
+      </div>
+
+      <div class="tier hot reveal">
+        <h3>Grove · proposed</h3>
+        <p class="price">Design partners <small>roadmap</small></p>
+        <p style="color:var(--ink-soft);font-size:.98rem">The proposed hosted control plane for one production system. These capabilities are targets for design-partner validation.</p>
+        <ul>
+          <li>Ambiguity telemetry: what your users actually meant</li>
+          <li>Provenance registry &amp; drift dashboards</li>
+          <li>Persistent Lethe with scheduled sweep policies</li>
+          <li>Signed erasure receipts, exportable for audit</li>
+          <li>Slack/pager alerts on drift &amp; ledger anomalies</li>
+        </ul>
+        <a class="btn" href="mailto:hello@polysemic.systems?subject=Grove%20design%20partner">Discuss the roadmap</a>
+      </div>
+
+      <div class="tier reveal">
+        <h3>Canopy · research track</h3>
+        <p class="price">Not available <small>future scope</small></p>
+        <p style="color:var(--ink-soft);font-size:.98rem">Potential fleet-wide scope for organizations where forgetting is a compliance requirement.</p>
+        <ul>
+          <li>Unlimited systems, SSO, on-prem control plane</li>
+          <li>Right-to-be-forgotten SLAs with receipt registry</li>
+          <li>Unlearning-readiness audits for weights &amp; indexes</li>
+          <li>Custom repair passes &amp; schema extensions</li>
+          <li>A named human who answers the phone</li>
+        </ul>
+        <a class="btn ghost" href="mailto:hello@polysemic.systems?subject=Canopy%20research">Share requirements</a>
+      </div>
+
+    </div>
+
+    <article class="prose" style="padding-top:8px">
+      <div class="narrow">
+        <h2>Questions people actually ask</h2>
+
+        <h3>Why is the core free?</h3>
+        <p class="muted">Because a manifesto you have to pay to practice isn't a manifesto, it's a paywall. The cores are small, auditable, and dependency-free on purpose. Fleet persistence, registries, and dashboards are roadmap work that will be priced only if and when they become a real service.</p>
+
+        <h3>What counts as "one system"?</h3>
+        <p class="muted">One deployed application with its own seam, ontology, and memory — however many models it calls. A monorepo with three products is three systems; one product with five model providers is one.</p>
+
+        <h3>Do erasure receipts satisfy GDPR/right-to-be-forgotten?</h3>
+        <p class="muted">Receipts are evidence of deletion, not legal advice — your counsel maps them to your obligations. What we provide: predicate erasure, a registry of what was released and when, and exports your auditors can read. On Canopy, deletion SLAs are contractual.</p>
+
+        <h3>Can I pilot just one organ?</h3>
+        <p class="muted">Yes. A design-partner conversation can focus on one boundary—ambiguity, ontology drift, or erasure—without implying that a hosted product already exists.</p>
+      </div>
+    </article>
+  </div>
+
+  <section class="cta wrap">
+    <div class="cta-box reveal">
+      <h2>Not sure which organ you're missing?</h2>
+      <p>Forty-five minutes: you describe the system, we tell you whether it's dying as a hoarder, an amnesiac, or a museum — and what the first month of fixing that looks like.</p>
+      <div class="row">
+        <a class="btn" href="mailto:hello@polysemic.systems?subject=Diagnostic">Book a diagnostic</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

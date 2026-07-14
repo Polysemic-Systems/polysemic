@@ -1,0 +1,4 @@
+corpus=support-policy-workshop-2026
+vintage=2025-10..2026-06
+tokens=820000
+annotator_labor=credited

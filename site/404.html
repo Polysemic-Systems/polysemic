@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>404 — forgotten | polysemic.systems</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  .lost{min-height:70vh;display:flex;align-items:center;padding:60px 0}
+  .lost h1{font-family:var(--display);font-weight:800;font-size:clamp(3.5rem,14vw,10rem);letter-spacing:-.03em;line-height:.9}
+  .receipt{margin-top:34px;font-family:var(--mono);font-size:.85rem;border:1.5px solid var(--ink);background:var(--card);padding:20px 24px;max-width:520px;box-shadow:6px 6px 0 rgba(237,77,139,.25)}
+  .receipt .ok{color:var(--blue);font-weight:600}
+  .receipt .hash{color:var(--pink)}
+  .lost .lede{margin-top:22px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html">Digest</a>
+      <a href="strata.html">Strata</a>
+      <a href="lethe.html">Lethe</a>
+      <a href="docs.html">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="docs.html">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="lost">
+    <div class="wrap">
+      <span class="eyebrow">404</span>
+      <h1>This page has been
+        <span class="op"><i class="p" aria-hidden="true">forgotten.</i><i class="b" aria-hidden="true">forgotten.</i>forgotten.</span>
+      </h1>
+      <p class="lede">Either it never existed, or its TTL expired, or its salience fell below the floor. We don't hoard pages here.</p>
+      <div class="receipt" role="note">
+        <div><span class="ok">✓</span> 1 page released — <span class="hash" id="era">lethe://era/…</span></div>
+        <div style="color:var(--ink-soft);margin-top:6px">a tombstone, not a backup. deletion is the noblest commit.</div>
+      </div>
+      <div style="margin-top:34px;display:flex;gap:14px;flex-wrap:wrap">
+        <a class="btn" href="index.html">Begin again</a>
+        <a class="btn ghost" href="docs.html">Read the docs</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+<script>
+  // FNV-1a over the lost path: every missing URL gets its own honest receipt.
+  (function () {
+    let h = 0xcbf29ce4 >>> 0; // 32-bit FNV for JS-safe math
+    const s = location.pathname || "/lost";
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    document.getElementById('era').textContent =
+      'lethe://era/' + h.toString(16).padStart(8, '0');
+  })();
+</script>
+</body>
+</html>

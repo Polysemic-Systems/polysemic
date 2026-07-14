@@ -62,6 +62,8 @@ fn main() {
     println!("── strata: the sediment ─────────────────────────────────");
     let label = ProvenanceLabel {
         corpus: "prod-v4".into(),
+        source_uri: "urn:polysemic:corpus:prod-v4".into(),
+        corpus_sha256: "a".repeat(64),
         tokens: 2_400_000_000_000,
         vintage: "mostly post-1996".into(),
         languages: vec![("en".into(), 0.87), ("other".into(), 0.13)],
@@ -74,7 +76,7 @@ fn main() {
     let watch = DriftWatch::new(0.2);
     let grown = dist([("nuclear", 0.8), ("extended", 0.2)]);
     let observed = dist([("nuclear", 0.4), ("extended", 0.3), ("chosen", 0.3)]);
-    if let Some(alert) = watch.compare("family", &grown, &observed) {
+    if let Some(alert) = watch.compare("family", &grown, &observed).unwrap() {
         println!("   {alert}");
     }
 

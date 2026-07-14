@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docs — quickstart | polysemic.systems</title>
+<meta name="description" content="Get Digest, Strata, and Lethe running in five minutes. Zero dependencies, std only.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html">Digest</a>
+      <a href="strata.html">Strata</a>
+      <a href="lethe.html">Lethe</a>
+      <a href="docs.html" aria-current="page">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="#install">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-hero">
+    <div class="narrow">
+      <span class="eyebrow">Documentation</span>
+      <h1 class="display">Five minutes to a living seam.</h1>
+      <p class="lede">The Rust cores are <strong>std-only and dependency-free.</strong> Three standalone proofs make their boundary contracts executable.</p>
+    </div>
+  </section>
+
+  <article class="prose">
+    <div class="narrow">
+
+      <h2 id="install">1 · Install</h2>
+      <pre class="block"><span class="kw">$</span> git clone https://github.com/Polysemic-Systems/polysemic.git
+<span class="kw">$</span> cd polysemic
+<span class="kw">$</span> cargo test --workspace
+<span class="kw">$</span> cargo run --quiet -p seam-demo</pre>
+
+      <div class="proof-links">
+        <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">Source on GitHub ↗</a>
+      </div>
+
+      <h2>2 · Run the standalone proofs</h2>
+      <pre class="block"><span class="cm"># Digest: clarify first, then apply only the requested answer</span>
+<span class="kw">$</span> cargo run --quiet -p digest-poc -- demo
+
+<span class="cm"># Strata: compare provenance-bound ontology snapshots</span>
+<span class="kw">$</span> cargo run --quiet -p strata-poc -- demo
+<span class="kw">$</span> python3 examples/strata-poc/verify_commitments.py
+
+<span class="cm"># Lethe: erase from PostgreSQL+pgvector and Redis</span>
+<span class="kw">$</span> python3 examples/lethe-stores/lethe_poc.py demo</pre>
+
+      <div class="proof-links">
+        <a href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/digest-poc" target="_blank" rel="noreferrer">Digest POC ↗</a>
+        <a href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/strata-poc" target="_blank" rel="noreferrer">Strata POC ↗</a>
+        <a href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/lethe-stores" target="_blank" rel="noreferrer">Lethe POC ↗</a>
+      </div>
+
+      <h2>3 · Define the legislated layer</h2>
+      <p>A schema is a floor, not a ceiling: it legislates the fields it names and lets extra meaning pass through.</p>
+      <pre class="block"><span class="kw">use</span> digest::{digest, digest_with_answers, Answer, Field, Outcome, Schema};
+<span class="kw">use</span> polysemic_core::Value;
+
+<span class="kw">let</span> schema = Schema::obj([
+    Field::req(<span class="st">"item"</span>, Schema::Str),
+    Field::req(<span class="st">"qty"</span>,  Schema::num_range(<span class="st">1.0</span>, <span class="st">99.0</span>)),
+    Field::opt(<span class="st">"gift_wrap"</span>, Schema::Bool),
+    Field::opt(<span class="st">"size"</span>, Schema::choice([<span class="st">"small"</span>, <span class="st">"double"</span>, <span class="st">"triple"</span>])),
+]);</pre>
+
+      <h2>4 · Digest the mess</h2>
+      <p>This is real model output — fenced, single-quoted, Pythonic, trailing comma, hedged quantity. A normal Tuesday.</p>
+      <pre class="block"><span class="kw">let</span> raw = <span class="st">r#"Sure — here's the order:
+```json
+{'item': 'espresso', 'qty': '2 or 3', 'gift_wrap': True,}
+```"#</span>;
+
+<span class="kw">let</span> d = digest(raw, &schema)?;
+
+<span class="kw">for</span> repair <span class="kw">in</span> &d.repairs {
+    println!(<span class="st">"repaired: {repair}"</span>);
+    <span class="cm">// stripped markdown fence</span>
+    <span class="cm">// rewrote Python literals (True/False/None)</span>
+    <span class="cm">// rewrote single-quoted strings</span>
+    <span class="cm">// removed trailing commas</span>
+}
+
+<span class="kw">match</span> d.outcome {
+    Outcome::Resolved(order) => commit(order),
+    Outcome::Clarify(questions) => {
+        <span class="cm">// $.qty — "2 or 3" holds two readings [2 | 3]</span>
+        ask_user(questions)
+    }
+}
+
+<span class="cm">// Apply only the path Digest asked about; the answer is ledgered.</span>
+<span class="kw">let</span> answered = digest_with_answers(
+    raw, &schema, [Answer::new(<span class="st">"$.qty"</span>, Value::Num(<span class="st">2.0</span>))]
+)?;</pre>
+
+      <h2>5 · For high-stakes calls, reconcile</h2>
+      <pre class="block"><span class="kw">use</span> digest::reconcile;
+
+<span class="kw">let</span> r = reconcile(&[sample_1, sample_2, sample_3], &schema)?;
+<span class="cm">// field-wise majority commits; dissent becomes a question.</span>
+<span class="cm">// the model's variance is polysemy, not noise.</span></pre>
+
+      <h2>6 · Keep provenance attached to meaning</h2>
+      <pre class="block"><span class="kw">use</span> strata::{Labor, OntologySnapshot, ProvenanceEnvelope, ProvenanceLabel};
+
+<span class="kw">let</span> baseline = ProvenanceEnvelope::new(
+    <span class="st">"family-support-router"</span>, <span class="st">"model-v1"</span>,
+    <span class="st">"examples/strata-poc/model-v1.artifact.txt"</span>,
+    <span class="st">"5e5474809c937330a856de5a705890d26b68a7c8be21f7658f616cfeed18e570"</span>,
+    ProvenanceLabel {
+        corpus: <span class="st">"archived-support-tickets"</span>.into(),
+        source_uri: <span class="st">"examples/strata-poc/archived-support-tickets.manifest.txt"</span>.into(),
+        corpus_sha256: <span class="st">"6b8f664ed4b1a1142ab6751a5173a9b54f8f015c009b5a55e8051fa56c73a3c4"</span>.into(),
+        tokens: <span class="st">12_500_000</span>,
+        vintage: <span class="st">"2018-01..2019-12"</span>.into(),
+        languages: vec![(<span class="st">"en"</span>.into(), <span class="st">1.0</span>)],
+        annotator_labor: Labor::Uncredited,
+        notes: vec![],
+    },
+    OntologySnapshot::new(<span class="st">"family"</span>, <span class="st">"model-v1"</span>, [
+        (<span class="st">"nuclear"</span>, <span class="st">"married parents and their dependent children"</span>),
+        (<span class="st">"single_parent"</span>, <span class="st">"one parent and dependent children"</span>),
+    ]),
+);
+
+<span class="kw">let</span> observed_label = ProvenanceLabel {
+    corpus: <span class="st">"support-policy-workshop-2026"</span>.into(),
+    source_uri: <span class="st">"examples/strata-poc/support-policy-workshop.manifest.txt"</span>.into(),
+    corpus_sha256: <span class="st">"09773973f2845e3197046bac6cfda515d41ec44d845dc1fb1a627b9a400f4cdb"</span>.into(),
+    tokens: <span class="st">820_000</span>,
+    vintage: <span class="st">"2025-10..2026-06"</span>.into(),
+    languages: vec![(<span class="st">"en"</span>.into(), <span class="st">1.0</span>)],
+    annotator_labor: Labor::Credited,
+    ..baseline.provenance.clone()
+};
+<span class="kw">let</span> observed = ProvenanceEnvelope::new(
+    <span class="st">"family-support-router"</span>, <span class="st">"candidate-v2"</span>,
+    <span class="st">"examples/strata-poc/candidate-v2.artifact.txt"</span>,
+    <span class="st">"0ad6b0a29456adb13f2aa5c5b5752aaa0717fe553a80e29d0661e83dd1db9cf9"</span>,
+    observed_label,
+    OntologySnapshot::new(<span class="st">"family"</span>, <span class="st">"users-2026-07"</span>, [
+        (<span class="st">"nuclear"</span>, <span class="st">"a household's primary care network"</span>),
+        (<span class="st">"chosen"</span>, <span class="st">"people intentionally recognized as family"</span>),
+    ]),
+);
+
+<span class="kw">let</span> drift = baseline.compare(&observed, <span class="st">"nuclear"</span>)?;
+<span class="kw">assert!</span>(drift.probe.changed());
+<span class="cm">// +chosen, -single_parent, ~nuclear</span>
+<span class="cm">// drift.baseline and drift.observed retain both histories</span></pre>
+
+      <h2>7 · Give memory an exit</h2>
+      <pre class="block"><span class="kw">use</span> lethe::{Lethe, RetentionPolicy};
+<span class="kw">use</span> std::time::{Duration, Instant};
+
+<span class="kw">let mut</span> memory = Lethe::new(Duration::from_secs(<span class="st">3600</span>), <span class="st">0.05</span>);
+<span class="kw">let</span> now = Instant::now();
+
+<span class="kw">let</span> policy = RetentionPolicy::new(
+    <span class="st">"customer-preference-v1"</span>, Duration::from_secs(<span class="st">90</span> * <span class="st">24</span> * <span class="st">3600</span>)
+);
+memory.remember_with_policy(<span class="st">"user:8842"</span>, <span class="st">"prefers oat milk"</span>, &policy, now);
+
+memory.recall(<span class="st">"oat"</span>, now);   <span class="cm">// recall is use; use keeps memories alive</span>
+memory.sweep_with_receipt(now); <span class="cm">// the garden, pruned and receipted</span>
+
+<span class="kw">let</span> receipt = memory.forget(|m| m.subject == <span class="st">"user:8842"</span>);
+<span class="cm">// ✓ 1 memory released — lethe://era/…  (deletion you can prove)</span></pre>
+
+      <h2>API at a glance</h2>
+      <table>
+        <tr><th>Call</th><th>What it guarantees</th></tr>
+        <tr><td>digest(raw, &schema)</td><td>A trusted value or explicit questions — never a value you can't trust. All repairs named.</td></tr>
+        <tr><td>reconcile(&samples, &schema)</td><td>Majority commits, dissent asks. Per-sample digestions returned for audit.</td></tr>
+        <tr><td>ProvenanceEnvelope::compare</td><td>Ontology drift plus a concept probe, with both corpus and labor histories retained.</td></tr>
+        <tr><td>DriftWatch::compare</td><td>A 0–1 total-variation result or an explicit error for negative, non-finite, or empty distributions.</td></tr>
+        <tr><td>Legislature::resolve</td><td>Every answer names its layer: grown or legislated-with-reason.</td></tr>
+        <tr><td>Lethe::remember</td><td>TTL is a required argument. Nothing enters without an exit plan.</td></tr>
+        <tr><td>Lethe::sweep_with_receipt</td><td>Scheduled expiry and salience pruning return a deletion commitment.</td></tr>
+        <tr><td>ErasureCoordinator::erase_subject</td><td>Complete only after every durable-store adapter verifies absence.</td></tr>
+      </table>
+
+      <h2>Honest limitations</h2>
+      <p class="muted">The open-source cores are deliberately small: Digest supports an explicit JSON Schema subset; Strata's ontology diff compares normalized text while its separate behavior probe replays a recorded case; Strata's SHA-256 commitments prove fixture integrity, not signer identity; core receipts use FNV-1a while the Lethe store proof uses SHA-256; and the PostgreSQL+pgvector and Redis adapters shell into version-pinned local containers rather than native drivers. The seams where you'd extend them are marked in the doc comments.</p>
+
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

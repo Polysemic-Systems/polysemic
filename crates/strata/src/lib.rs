@@ -4,9 +4,9 @@
 //! particular corpus, written by particular people, at a particular time.
 //! This crate makes the sediment legible and governable:
 //!
-//! - [`ProvenanceLabel`]: a shipping manifest for training data. The model
-//!   does not simply "know" — it remembers what a particular crowd once
-//!   wrote. The label says which crowd.
+//! - [`ProvenanceLabel`]: a shipping manifest for training data. Wrapped in a
+//!   [`ProvenanceEnvelope`], an ontology snapshot and every comparison retain
+//!   the histories that produced them.
 //! - [`DriftWatch`]: total-variation distance between the distribution the
 //!   model's ontology assumes and the distribution your users actually
 //!   exhibit. When the weights stop matching the world, you hear about it.
@@ -44,9 +44,13 @@ impl fmt::Display for Labor {
 }
 
 /// A nutrition label for a corpus. Ship it with every model artifact.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProvenanceLabel {
     pub corpus: String,
+    /// Stable location or registry identifier for the corpus manifest.
+    pub source_uri: String,
+    /// SHA-256 commitment to that manifest or corpus export.
+    pub corpus_sha256: String,
     pub tokens: u64,
     pub vintage: String,
     /// Language shares, e.g. `[("en", 0.87), ("other", 0.13)]`.
@@ -59,6 +63,8 @@ impl fmt::Display for ProvenanceLabel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "┌─ PROVENANCE FACTS ─────────────────────────")?;
         writeln!(f, "│ corpus          {}", self.corpus)?;
+        writeln!(f, "│ source          {}", self.source_uri)?;
+        writeln!(f, "│ corpus sha256   {}", self.corpus_sha256)?;
         writeln!(f, "│ serving size    {} tokens", humanize(self.tokens))?;
         writeln!(f, "│ vintage         {}", self.vintage)?;
         for (lang, share) in &self.languages {
@@ -95,19 +101,76 @@ pub fn dist<S: Into<String>>(pairs: impl IntoIterator<Item = (S, f64)>) -> Dist 
 }
 
 /// Total variation distance between two (auto-normalized) distributions:
-/// half the L1 distance, in `[0, 1]`. The honest scalar for "how far has
-/// the sediment drifted from the world".
-pub fn total_variation(p: &Dist, q: &Dist) -> f64 {
+/// half the L1 distance, in `[0, 1]`. Invalid weights are rejected rather than
+/// turned into a plausible drift score.
+pub fn total_variation(p: &Dist, q: &Dist) -> Result<f64, DistributionError> {
+    validate_distribution("baseline", p)?;
+    validate_distribution("observed", q)?;
     let sum_p: f64 = p.values().sum();
     let sum_q: f64 = q.values().sum();
-    let np = |k: &str| p.get(k).copied().unwrap_or(0.0) / sum_p.max(f64::EPSILON);
-    let nq = |k: &str| q.get(k).copied().unwrap_or(0.0) / sum_q.max(f64::EPSILON);
+    let np = |k: &str| p.get(k).copied().unwrap_or(0.0) / sum_p;
+    let nq = |k: &str| q.get(k).copied().unwrap_or(0.0) / sum_q;
 
     let mut keys: Vec<&String> = p.keys().chain(q.keys()).collect();
     keys.sort();
     keys.dedup();
 
-    0.5 * keys.iter().map(|k| (np(k) - nq(k)).abs()).sum::<f64>()
+    Ok(0.5 * keys.iter().map(|k| (np(k) - nq(k)).abs()).sum::<f64>())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DistributionError {
+    InvalidThreshold(f64),
+    EmptyMass {
+        side: &'static str,
+    },
+    InvalidWeight {
+        side: &'static str,
+        category: String,
+        weight: f64,
+    },
+}
+
+impl fmt::Display for DistributionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DistributionError::InvalidThreshold(threshold) => {
+                write!(
+                    f,
+                    "drift threshold must be finite and in [0, 1], got {threshold}"
+                )
+            }
+            DistributionError::EmptyMass { side } => {
+                write!(f, "{side} distribution must have positive mass")
+            }
+            DistributionError::InvalidWeight {
+                side,
+                category,
+                weight,
+            } => write!(
+                f,
+                "{side} distribution has invalid weight {weight} for {category:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DistributionError {}
+
+fn validate_distribution(side: &'static str, distribution: &Dist) -> Result<(), DistributionError> {
+    for (category, weight) in distribution {
+        if !weight.is_finite() || *weight < 0.0 {
+            return Err(DistributionError::InvalidWeight {
+                side,
+                category: category.clone(),
+                weight: *weight,
+            });
+        }
+    }
+    if distribution.values().sum::<f64>() <= 0.0 {
+        return Err(DistributionError::EmptyMass { side });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,16 +201,24 @@ impl DriftWatch {
 
     /// Compare the distribution the model's ontology assumes (`grown`)
     /// against what your users actually exhibit (`observed`).
-    pub fn compare(&self, category: &str, grown: &Dist, observed: &Dist) -> Option<DriftAlert> {
-        let d = total_variation(grown, observed);
+    pub fn compare(
+        &self,
+        category: &str,
+        grown: &Dist,
+        observed: &Dist,
+    ) -> Result<Option<DriftAlert>, DistributionError> {
+        if !self.threshold.is_finite() || !(0.0..=1.0).contains(&self.threshold) {
+            return Err(DistributionError::InvalidThreshold(self.threshold));
+        }
+        let d = total_variation(grown, observed)?;
         if d > self.threshold {
-            Some(DriftAlert {
+            Ok(Some(DriftAlert {
                 category: category.to_string(),
                 distance: d,
                 suggestion: "activate constraint layer; schedule sediment refresh".into(),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
 }
@@ -259,6 +330,263 @@ impl fmt::Display for OntologyDrift {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Provenance-carrying ontology artifacts
+// ---------------------------------------------------------------------------
+
+/// An ontology snapshot that cannot travel without its corpus provenance.
+///
+/// The artifact and ontology versions are intentionally separate: a model
+/// release can reuse an ontology snapshot, and an ontology can evolve between
+/// model releases. Keeping both makes that relationship inspectable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProvenanceEnvelope {
+    pub artifact_id: String,
+    pub artifact_version: String,
+    /// Stable location or registry identifier for the artifact bytes.
+    pub artifact_uri: String,
+    /// SHA-256 commitment to the exact artifact revision under review.
+    pub artifact_sha256: String,
+    pub provenance: ProvenanceLabel,
+    pub ontology: OntologySnapshot,
+    pub behavior_cases: BTreeMap<String, BehaviorReading>,
+}
+
+impl ProvenanceEnvelope {
+    pub fn new(
+        artifact_id: &str,
+        artifact_version: &str,
+        artifact_uri: &str,
+        artifact_sha256: &str,
+        provenance: ProvenanceLabel,
+        ontology: OntologySnapshot,
+    ) -> Self {
+        Self {
+            artifact_id: artifact_id.to_string(),
+            artifact_version: artifact_version.to_string(),
+            artifact_uri: artifact_uri.to_string(),
+            artifact_sha256: artifact_sha256.to_string(),
+            provenance,
+            ontology,
+            behavior_cases: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_behavior_cases(
+        mut self,
+        cases: impl IntoIterator<Item = (String, BehaviorReading)>,
+    ) -> Self {
+        self.behavior_cases = cases.into_iter().collect();
+        self
+    }
+
+    /// Compare two revisions of the same artifact and probe one concept's
+    /// meaning on both sides of the version boundary.
+    pub fn compare(
+        &self,
+        observed: &ProvenanceEnvelope,
+        concept: &str,
+    ) -> Result<EnvelopeComparison, ComparisonError> {
+        if self.artifact_id != observed.artifact_id {
+            return Err(ComparisonError::ArtifactMismatch {
+                baseline: self.artifact_id.clone(),
+                observed: observed.artifact_id.clone(),
+            });
+        }
+        if self.ontology.name != observed.ontology.name {
+            return Err(ComparisonError::OntologyMismatch {
+                baseline: self.ontology.name.clone(),
+                observed: observed.ontology.name.clone(),
+            });
+        }
+
+        let baseline_definition = self.ontology.concepts.get(concept).cloned();
+        let observed_definition = observed.ontology.concepts.get(concept).cloned();
+        if baseline_definition.is_none() && observed_definition.is_none() {
+            return Err(ComparisonError::UnknownProbe {
+                concept: concept.to_string(),
+            });
+        }
+        Ok(EnvelopeComparison {
+            baseline: self.clone(),
+            observed: observed.clone(),
+            ontology_drift: self.ontology.compare(&observed.ontology),
+            probe: ConceptProbe {
+                concept: concept.to_string(),
+                baseline_definition,
+                observed_definition,
+            },
+        })
+    }
+
+    /// Replay one recorded case across two artifact snapshots. The case input
+    /// must be identical, and each classification must exist in its ontology.
+    pub fn probe_behavior(
+        &self,
+        observed: &ProvenanceEnvelope,
+        case_id: &str,
+    ) -> Result<BehaviorProbe, ComparisonError> {
+        let baseline = self.behavior_cases.get(case_id).cloned();
+        let observed_reading = observed.behavior_cases.get(case_id).cloned();
+        let (Some(baseline), Some(observed_reading)) = (baseline, observed_reading) else {
+            return Err(ComparisonError::UnknownBehaviorCase {
+                case_id: case_id.to_string(),
+            });
+        };
+        if baseline.input != observed_reading.input {
+            return Err(ComparisonError::BehaviorInputMismatch {
+                case_id: case_id.to_string(),
+            });
+        }
+        for (side, reading, ontology) in [
+            ("baseline", &baseline, &self.ontology),
+            ("observed", &observed_reading, &observed.ontology),
+        ] {
+            if !ontology.concepts.contains_key(&reading.classification) {
+                return Err(ComparisonError::InvalidBehaviorClassification {
+                    side,
+                    case_id: case_id.to_string(),
+                    classification: reading.classification.clone(),
+                });
+            }
+        }
+        Ok(BehaviorProbe {
+            case_id: case_id.to_string(),
+            input: baseline.input.clone(),
+            baseline,
+            observed: observed_reading,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BehaviorReading {
+    pub input: String,
+    pub classification: String,
+    pub route: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BehaviorProbe {
+    pub case_id: String,
+    pub input: String,
+    pub baseline: BehaviorReading,
+    pub observed: BehaviorReading,
+}
+
+impl BehaviorProbe {
+    pub fn changed(&self) -> bool {
+        self.baseline.classification != self.observed.classification
+            || self.baseline.route != self.observed.route
+    }
+}
+
+/// A comparison was requested between envelopes that do not describe the
+/// same artifact or ontology. Refusing the comparison avoids a plausible but
+/// meaningless drift score.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComparisonError {
+    ArtifactMismatch {
+        baseline: String,
+        observed: String,
+    },
+    OntologyMismatch {
+        baseline: String,
+        observed: String,
+    },
+    UnknownProbe {
+        concept: String,
+    },
+    UnknownBehaviorCase {
+        case_id: String,
+    },
+    BehaviorInputMismatch {
+        case_id: String,
+    },
+    InvalidBehaviorClassification {
+        side: &'static str,
+        case_id: String,
+        classification: String,
+    },
+}
+
+impl fmt::Display for ComparisonError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ComparisonError::ArtifactMismatch { baseline, observed } => write!(
+                f,
+                "artifact mismatch: baseline {baseline:?}, observed {observed:?}"
+            ),
+            ComparisonError::OntologyMismatch { baseline, observed } => write!(
+                f,
+                "ontology mismatch: baseline {baseline:?}, observed {observed:?}"
+            ),
+            ComparisonError::UnknownProbe { concept } => {
+                write!(f, "probe concept {concept:?} is absent from both snapshots")
+            }
+            ComparisonError::UnknownBehaviorCase { case_id } => {
+                write!(
+                    f,
+                    "behavior case {case_id:?} is not recorded in both snapshots"
+                )
+            }
+            ComparisonError::BehaviorInputMismatch { case_id } => write!(
+                f,
+                "behavior case {case_id:?} does not contain the same input on both sides"
+            ),
+            ComparisonError::InvalidBehaviorClassification {
+                side,
+                case_id,
+                classification,
+            } => write!(
+                f,
+                "{side} behavior case {case_id:?} references unknown concept {classification:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ComparisonError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConceptProbe {
+    pub concept: String,
+    pub baseline_definition: Option<String>,
+    pub observed_definition: Option<String>,
+}
+
+impl ConceptProbe {
+    /// Whether the probed concept was added, removed, or materially
+    /// redefined. Case and whitespace-only edits are ignored just as they are
+    /// in [`OntologySnapshot::compare`].
+    pub fn changed(&self) -> bool {
+        match (&self.baseline_definition, &self.observed_definition) {
+            (Some(baseline), Some(observed)) => {
+                canonical_definition(baseline) != canonical_definition(observed)
+            }
+            (None, None) => false,
+            _ => true,
+        }
+    }
+}
+
+/// A drift result with both source envelopes attached. The definitions in the
+/// diff and probe therefore cannot be transported without the corpus and
+/// labor histories that produced them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnvelopeComparison {
+    pub baseline: ProvenanceEnvelope,
+    pub observed: ProvenanceEnvelope,
+    pub ontology_drift: OntologyDrift,
+    pub probe: ConceptProbe,
+}
+
+impl EnvelopeComparison {
+    pub fn drift_detected(&self) -> bool {
+        !self.ontology_drift.is_empty()
+    }
+}
+
 fn canonical_definition(definition: &str) -> String {
     definition
         .split_whitespace()
@@ -351,10 +679,10 @@ mod tests {
     #[test]
     fn tvd_is_zero_for_identical_and_one_for_disjoint() {
         let p = dist([("a", 0.5), ("b", 0.5)]);
-        assert!(total_variation(&p, &p) < 1e-12);
+        assert!(total_variation(&p, &p).unwrap() < 1e-12);
 
         let q = dist([("c", 1.0)]);
-        assert!((total_variation(&p, &q) - 1.0).abs() < 1e-12);
+        assert!((total_variation(&p, &q).unwrap() - 1.0).abs() < 1e-12);
     }
 
     #[test]
@@ -364,9 +692,22 @@ mod tests {
         let same = dist([("nuclear", 0.78), ("extended", 0.22)]);
         let moved = dist([("nuclear", 0.4), ("extended", 0.3), ("chosen", 0.3)]);
 
-        assert!(watch.compare("family", &grown, &same).is_none());
-        let alert = watch.compare("family", &grown, &moved).unwrap();
+        assert!(watch.compare("family", &grown, &same).unwrap().is_none());
+        let alert = watch.compare("family", &grown, &moved).unwrap().unwrap();
         assert!(alert.distance > 0.2);
+    }
+
+    #[test]
+    fn drift_watch_rejects_invalid_distributions() {
+        let watch = DriftWatch::new(0.2);
+        let invalid = dist([("family", -1.0), ("other", 2.0)]);
+        let observed = dist([("family", 1.0)]);
+
+        assert!(matches!(
+            watch.compare("family", &invalid, &observed),
+            Err(DistributionError::InvalidWeight { .. })
+        ));
+        assert!(total_variation(&Dist::new(), &observed).is_err());
     }
 
     #[test]
@@ -407,6 +748,129 @@ mod tests {
     }
 
     #[test]
+    fn provenance_envelopes_compare_only_like_artifacts() {
+        let baseline = envelope(
+            "family-router",
+            "model-v1",
+            "family",
+            "parents and children",
+        );
+        let observed = envelope(
+            "family-router",
+            "candidate-v2",
+            "family",
+            "a household's primary care network",
+        );
+
+        let comparison = baseline.compare(&observed, "nuclear").unwrap();
+        assert!(comparison.drift_detected());
+        assert!(comparison.probe.changed());
+        assert_eq!(comparison.baseline.artifact_id, "family-router");
+        assert_eq!(comparison.baseline.provenance.corpus, "support-archive");
+        assert_eq!(comparison.observed.provenance.corpus, "support-archive");
+
+        let unrelated = envelope("risk-router", "v2", "family", "parents and children");
+        assert!(matches!(
+            baseline.compare(&unrelated, "nuclear"),
+            Err(ComparisonError::ArtifactMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn concept_probe_exposes_added_meaning() {
+        let baseline = ProvenanceEnvelope::new(
+            "family-router",
+            "model-v1",
+            "urn:test:artifact:model-v1",
+            &"1".repeat(64),
+            label("archive-2018"),
+            OntologySnapshot::new("family", "v1", [("nuclear", "parents and children")]),
+        );
+        let observed = ProvenanceEnvelope::new(
+            "family-router",
+            "candidate-v2",
+            "urn:test:artifact:candidate-v2",
+            &"2".repeat(64),
+            label("support-2026"),
+            OntologySnapshot::new(
+                "family",
+                "v2",
+                [
+                    ("nuclear", "parents and children"),
+                    ("chosen", "people intentionally recognized as family"),
+                ],
+            ),
+        );
+
+        let probe = baseline.compare(&observed, "chosen").unwrap().probe;
+        assert!(probe.baseline_definition.is_none());
+        assert!(probe.observed_definition.is_some());
+        assert!(probe.changed());
+    }
+
+    #[test]
+    fn unknown_concept_cannot_masquerade_as_a_stable_probe() {
+        let baseline = envelope(
+            "family-router",
+            "model-v1",
+            "family",
+            "parents and children",
+        );
+        let observed = envelope(
+            "family-router",
+            "candidate-v2",
+            "family",
+            "a household's primary care network",
+        );
+
+        assert_eq!(
+            baseline.compare(&observed, "nucelar"),
+            Err(ComparisonError::UnknownProbe {
+                concept: "nucelar".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn behavior_probe_replays_the_same_case_and_exposes_a_route_change() {
+        let baseline = envelope(
+            "family-router",
+            "model-v1",
+            "family",
+            "parents and children",
+        )
+        .with_behavior_cases([(
+            "chosen-caregiver".into(),
+            BehaviorReading {
+                input: "Alex names a chosen-family caregiver".into(),
+                classification: "nuclear".into(),
+                route: "manual-review".into(),
+            },
+        )]);
+        let observed = envelope(
+            "family-router",
+            "candidate-v2",
+            "family",
+            "a household's primary care network",
+        )
+        .with_behavior_cases([(
+            "chosen-caregiver".into(),
+            BehaviorReading {
+                input: "Alex names a chosen-family caregiver".into(),
+                classification: "nuclear".into(),
+                route: "family-support".into(),
+            },
+        )]);
+
+        let probe = baseline
+            .probe_behavior(&observed, "chosen-caregiver")
+            .unwrap();
+        assert!(probe.changed());
+        assert_eq!(probe.baseline.route, "manual-review");
+        assert_eq!(probe.observed.route, "family-support");
+    }
+
+    #[test]
     fn legislature_overrules_grown_and_names_its_source() {
         let mut law = Legislature::new();
         let before = law.resolve("units", "imperial");
@@ -419,5 +883,34 @@ mod tests {
 
         assert!(law.repeal("units"));
         assert_eq!(law.resolve("units", "imperial").value, "imperial");
+    }
+
+    fn label(corpus: &str) -> ProvenanceLabel {
+        ProvenanceLabel {
+            corpus: corpus.into(),
+            source_uri: format!("urn:test:{corpus}"),
+            corpus_sha256: "a".repeat(64),
+            tokens: 1_000,
+            vintage: "2026-07".into(),
+            languages: vec![("en".into(), 1.0)],
+            annotator_labor: Labor::Credited,
+            notes: Vec::new(),
+        }
+    }
+
+    fn envelope(
+        artifact_id: &str,
+        artifact_version: &str,
+        ontology: &str,
+        definition: &str,
+    ) -> ProvenanceEnvelope {
+        ProvenanceEnvelope::new(
+            artifact_id,
+            artifact_version,
+            &format!("urn:test:artifact:{artifact_version}"),
+            &"1".repeat(64),
+            label("support-archive"),
+            OntologySnapshot::new(ontology, artifact_version, [("nuclear", definition)]),
+        )
     }
 }

@@ -62,8 +62,11 @@ jobs:
 
       - name: Check Python lint and formatting
         run: |
-          ruff check examples/lethe-stores
-          black --check --workers 1 examples/lethe-stores
+          ruff check examples/lethe-stores examples/strata-poc/verify_commitments.py scripts
+          black --check --workers 1 examples/lethe-stores examples/strata-poc/verify_commitments.py scripts
+
+      - name: Validate static website
+        run: python3 scripts/validate_site.py
 
       - name: Validate store Compose definition
         run: docker compose -f examples/lethe-stores/compose.yaml config --quiet
@@ -76,6 +79,11 @@ jobs:
 
       - name: Run Digest ambiguity-routing proof
         run: cargo run --quiet -p digest-poc -- demo
+
+      - name: Run Strata provenance and semantic-drift proof
+        run: |
+          python3 examples/strata-poc/verify_commitments.py
+          cargo run --quiet -p strata-poc -- demo
 
       - name: Remove store containers and volumes
         if: always()

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Digest — the seam layer | polysemic.systems</title>
+<meta name="description" content="Digest repairs malformed model output, converts ambiguity into questions, and reconciles samples. Never crash on ambiguity again.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html" aria-current="page">Digest</a>
+      <a href="strata.html">Strata</a>
+      <a href="lethe.html">Lethe</a>
+      <a href="docs.html">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="docs.html">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="organ-stamp pk">Metabolism</span>
+      <h1 class="display">Digest</h1>
+      <p class="lede">The seam layer. Most AI outages live on one boundary: probabilistic output meeting deterministic infrastructure. Digest sits on that seam and makes it <strong>a place of digestion instead of rupture.</strong></p>
+      <span class="install-line"><span class="dollar">$</span> cargo run --quiet -p digest-poc -- demo</span>
+    </div>
+  </section>
+
+  <div class="wrap">
+
+    <div class="split reveal">
+      <div class="s-text">
+        <h3>Repair, don't throw — and never silently</h3>
+        <p>Fences, surrounding prose, single quotes, Python literals, bare keys, trailing commas: the everyday mess of model output, fixed by named passes. <strong>Every fix is an entry in the <code>Repair</code> ledger.</strong> Silent repair is just a different kind of lying — your logs see exactly what was done to the text before you trusted it.</p>
+        <ul class="feat-list">
+          <li>Six ordered repair passes, string-aware, structure-safe</li>
+          <li>Strict parse attempted first: clean output pays no tax</li>
+          <li>Ledger entries are typed — audit, alert, or reject on any of them</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard pkshadow">
+        <div class="cc-bar"><span>the ledger</span><span class="lang">digest::Repair</span></div>
+        <pre><span class="kw">pub enum</span> <span class="fn">Repair</span> {
+    StrippedFence,
+    StrippedProse,
+    PythonLiterals,
+    RequotedStrings,
+    QuotedKeys,
+    RemovedTrailingCommas,
+    Coerced { path, from, to },
+    HedgeResolved { path, original },
+    CaseFolded { path, original },
+}
+<span class="cm">// nothing is silent. nothing.</span></pre>
+      </aside>
+    </div>
+
+    <div class="split flip reveal">
+      <div class="s-text">
+        <h3>Ambiguity becomes a question, not a coin flip</h3>
+        <p>When a quantity field says <code class="inline">"2 or 3"</code>, classical code throws and a guesser flips a coin. Digest reads the string for what it actually holds — one meaning, a hedge, or several — and responds in kind: <strong>coerce, resolve, or ask.</strong></p>
+        <p>The result type makes the guarantee structural: there is no state where you receive a value you can't trust.</p>
+        <ul class="feat-list">
+          <li><code>"42"</code> → coerced, with a named record</li>
+          <li><code>"~5"</code>, <code>"about 5"</code> → hedge resolved, with the original kept</li>
+          <li><code>"2 or 3"</code>, <code>"2-3"</code> → a Question with candidates</li>
+          <li><code>"a few"</code> → an open Question, honestly posed</li>
+          <li>Answers apply only to questioned paths and live in a separate answer ledger</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard pkshadow">
+        <div class="cc-bar"><span>the guarantee</span><span class="lang">digest::Outcome</span></div>
+        <pre><span class="kw">pub enum</span> <span class="fn">Outcome</span> {
+    Resolved(Value),
+    Clarify(Vec&lt;Question&gt;),
+}
+
+<span class="kw">match</span> <span class="fn">digest</span>(raw, &schema)?.outcome {
+    Outcome::Resolved(v) => commit(v),
+    Outcome::Clarify(qs) => ask_user(qs),
+}
+<span class="cm">// $.qty — "2 or 3" holds two readings [2 | 3]</span></pre>
+      </aside>
+    </div>
+
+    <div class="split reveal">
+      <div class="s-text">
+        <h3>Extra meaning is kept, not refused</h3>
+        <p>Your schema legislates the fields it names — it does not outlaw what it doesn't. Unknown keys pass through untouched, because the model saying more than you asked for is <strong>information, not error.</strong> The polysemy clause, in code.</p>
+      </div>
+      <aside class="s-code codecard pkshadow">
+        <div class="cc-bar"><span>polysemy clause</span><span class="lang">digest::Schema</span></div>
+        <pre><span class="cm">// schema: { item, qty, gift_wrap? }</span>
+<span class="cm">// model:  { item, qty, note: "oat milk" }</span>
+
+<span class="cm">// → resolved. "note" survives.</span>
+<span class="cm">// the schema is a floor, not a ceiling.</span></pre>
+      </aside>
+    </div>
+
+    <div class="split flip reveal" style="border-bottom:none">
+      <div class="s-text">
+        <h3>Sample several times, commit once</h3>
+        <p>For high-stakes calls, <code class="inline">reconcile()</code> digests multiple samples and treats the model's variance as polysemy, not noise: <strong>field-wise majority commits; dissent becomes a question</strong> with the disagreeing readings as candidates.</p>
+        <ul class="feat-list">
+          <li>Unanimity fast-path; field-level majority for objects</li>
+          <li>No majority → Clarify, never a silent pick</li>
+          <li>Per-sample digestions returned for full audit</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard pkshadow">
+        <div class="cc-bar"><span>reconcile.rs</span><span class="lang">digest::reconcile</span></div>
+        <pre><span class="kw">let</span> r = <span class="fn">reconcile</span>(&[s1, s2, s3], &schema)?;
+<span class="cm">// qty: 2, 2, 3 → committed 2 (majority)</span>
+<span class="cm">// item: "a", "b" (1–1) →</span>
+<span class="cm">//   ? $.item — samples disagree ["a" | "b"]</span></pre>
+      </aside>
+    </div>
+
+  </div>
+
+  <section class="cta wrap">
+    <div class="cta-box reveal">
+      <h2>Retire the 3:12 AM SyntaxError.</h2>
+      <p>Digest is open source, dependency-free, and drops onto the seam you already have. The strict parser inside is the measuring stick; the repairs are the mercy.</p>
+      <div class="row">
+        <a class="btn" href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/digest-poc" target="_blank" rel="noreferrer">Run the Digest POC ↗</a>
+        <a class="btn ghost" href="docs.html">Quickstart</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

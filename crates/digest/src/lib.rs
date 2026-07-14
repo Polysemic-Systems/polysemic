@@ -1148,7 +1148,7 @@ fn digest_numeric_string(
     let t = s.trim();
 
     // univocal: "42"
-    if let Ok(n) = t.parse::<f64>() {
+    if let Some(n) = parse_finite_number(t) {
         repairs.push(Repair::Coerced {
             path: path.to_string(),
             from: format!("string {s:?}"),
@@ -1169,7 +1169,7 @@ fn digest_numeric_string(
         "roughly ",
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
-            if let Ok(n) = rest.trim().parse::<f64>() {
+            if let Some(n) = parse_finite_number(rest.trim()) {
                 repairs.push(Repair::HedgeResolved {
                     path: path.to_string(),
                     original: s.to_string(),
@@ -1182,7 +1182,7 @@ fn digest_numeric_string(
 
     // enumerable polysemy: "2 or 3" → ask, with candidates
     if let Some((a, b)) = lower.split_once(" or ") {
-        if let (Ok(x), Ok(y)) = (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
+        if let (Some(x), Some(y)) = (parse_finite_number(a.trim()), parse_finite_number(b.trim())) {
             questions.push(Question {
                 path: path.to_string(),
                 prompt: format!("{s:?} holds two readings — which did they mean?"),
@@ -1195,7 +1195,9 @@ fn digest_numeric_string(
     // range polysemy: "2-3", "2–3"
     for dash in ['-', '–'] {
         if let Some((a, b)) = t.split_once(dash) {
-            if let (Ok(x), Ok(y)) = (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
+            if let (Some(x), Some(y)) =
+                (parse_finite_number(a.trim()), parse_finite_number(b.trim()))
+            {
                 questions.push(Question {
                     path: path.to_string(),
                     prompt: format!("{s:?} is a range — which value should apply?"),
@@ -1227,6 +1229,13 @@ fn digest_numeric_string(
     Value::Null
 }
 
+fn parse_finite_number(input: &str) -> Option<f64> {
+    input
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+}
+
 fn fmt_num(n: f64) -> String {
     Value::Num(n).to_string()
 }
@@ -1250,6 +1259,29 @@ pub fn reconcile(samples: &[&str], schema: &Schema) -> Result<Reconciliation, Pa
     for s in samples {
         digestions.push(digest(s, schema)?);
     }
+
+    // A sample that still needs clarification is evidence, not an abstention.
+    // Never let resolved samples silently outvote unresolved meaning.
+    let mut unresolved: Vec<Question> = Vec::new();
+    for digestion in &digestions {
+        if let Outcome::Clarify(questions) = &digestion.outcome {
+            for question in questions {
+                if !unresolved
+                    .iter()
+                    .any(|existing| existing.path == question.path)
+                {
+                    unresolved.push(question.clone());
+                }
+            }
+        }
+    }
+    if !unresolved.is_empty() {
+        return Ok(Reconciliation {
+            outcome: Outcome::Clarify(unresolved),
+            per_sample: digestions,
+        });
+    }
+
     let resolved: Vec<&Value> = digestions
         .iter()
         .filter_map(|d| match &d.outcome {
@@ -1577,5 +1609,21 @@ mod tests {
         let s2 = r#"{"qty": 2, "item": "a"}"#;
         let r = reconcile(&[s1, s2], &Schema::Any).unwrap();
         assert!(matches!(r.outcome, Outcome::Clarify(_)));
+    }
+
+    #[test]
+    fn reconcile_never_discards_a_clarifying_sample() {
+        let resolved = r#"{"item":"espresso","qty":2}"#;
+        let ambiguous = r#"{"item":"espresso","qty":"2 or 3"}"#;
+
+        let reconciliation = reconcile(&[resolved, ambiguous, ambiguous], &order_schema()).unwrap();
+
+        match reconciliation.outcome {
+            Outcome::Clarify(questions) => {
+                assert_eq!(questions.len(), 1);
+                assert_eq!(questions[0].path, "$.qty");
+            }
+            other => panic!("expected clarification, got {other:?}"),
+        }
     }
 }
