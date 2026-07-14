@@ -12,7 +12,7 @@ Infrastructure for systems that are alive. Three organs, zero dependencies.
 |---|---|---|
 | `digest` | **metabolism** | The seam layer. Repairs malformed model output with every fix *named*; converts genuine ambiguity into a `Question`; applies answers only to requested paths with a separate answer ledger; reconciles multiple samples by field-wise majority. |
 | `strata` | **sediment** | Ontology observability. `ProvenanceLabel` names the corpus; `DriftWatch` measures distribution drift; versioned `OntologySnapshot`s expose added, removed, and redefined concepts; `Legislature` is the contestable constraint layer. |
-| `lethe` | **excretion** | The delete path. Every memory has a TTL and can carry a named `RetentionPolicy`; salience decays unless recall reinforces it; scheduled sweeps and on-demand erasure both return receipts. |
+| `lethe` | **excretion** | The delete path. Every memory has a TTL and can carry a named `RetentionPolicy`; salience decays unless recall reinforces it; scheduled sweeps and on-demand erasure both return receipts; the open-core `ErasureAdapter` contract coordinates verified deletion across durable stores. |
 | `polysemic-core` | — | The univocal interior: a strict JSON `Value` and parser. Polysemy lives at the boundary, where it belongs. |
 
 ## Design commitments
