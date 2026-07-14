@@ -16,6 +16,10 @@ the PostgreSQL schema, seeds the same subject into PostgreSQL+pgvector and
 Redis, erases it from both, verifies that an unrelated subject survived, and
 prints two SHA-256 receipts.
 
+The first run pulls both container images and shows Docker's progress. Once the
+images are local, subsequent runs normally start in seconds. Service health has
+a 120-second startup timeout, so a broken container does not look like a hang.
+
 Expected shape:
 
 ```text

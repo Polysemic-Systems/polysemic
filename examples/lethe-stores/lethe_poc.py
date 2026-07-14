@@ -102,7 +102,9 @@ def _parse_redis_deleted(lines: Sequence[str]) -> list[DeletedMemory]:
 
 class Compose:
     def control(self, *args: str) -> str:
-        return self._run("docker", "compose", "-f", str(COMPOSE_FILE), *args)
+        return self._run(
+            "docker", "compose", "-f", str(COMPOSE_FILE), *args, stream=True
+        )
 
     def exec(self, service: str, *args: str, input_text: str | None = None) -> str:
         return self._run(
@@ -118,14 +120,14 @@ class Compose:
         )
 
     @staticmethod
-    def _run(*args: str, input_text: str | None = None) -> str:
+    def _run(*args: str, input_text: str | None = None, stream: bool = False) -> str:
         try:
             completed = subprocess.run(
                 args,
                 cwd=HERE,
                 input=input_text,
                 text=True,
-                capture_output=True,
+                capture_output=not stream,
                 check=False,
             )
         except FileNotFoundError as error:
@@ -133,9 +135,12 @@ class Compose:
                 f"required command is missing: {args[0]}"
             ) from error
         if completed.returncode:
-            detail = completed.stderr.strip() or completed.stdout.strip()
+            if stream:
+                detail = f"exit status {completed.returncode}; see Docker output above"
+            else:
+                detail = completed.stderr.strip() or completed.stdout.strip()
             raise StoreCommandError(f"{' '.join(args)} failed: {detail}")
-        return completed.stdout
+        return completed.stdout or ""
 
 
 class PostgresStore:
@@ -399,8 +404,11 @@ class RedisStore:
 
 
 def run_demo(compose: Compose) -> None:
-    print("Starting PostgreSQL+pgvector and Redis …")
-    compose.control("up", "--detach", "--wait")
+    print(
+        "Starting PostgreSQL+pgvector and Redis (the first run pulls images) …",
+        flush=True,
+    )
+    compose.control("up", "--detach", "--wait", "--wait-timeout", "120")
     postgres = PostgresStore(compose)
     redis = RedisStore(compose)
     postgres.setup()
