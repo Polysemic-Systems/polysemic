@@ -1,0 +1,43 @@
+{
+  "artifact": {
+    "id": "family-support-router",
+    "version": "candidate-v2",
+    "source_uri": "examples/strata-poc/candidate-v2.artifact.txt",
+    "sha256": "0ad6b0a29456adb13f2aa5c5b5752aaa0717fe553a80e29d0661e83dd1db9cf9"
+  },
+  "provenance": {
+    "corpus": "support-policy-workshop-2026",
+    "source_uri": "examples/strata-poc/support-policy-workshop.manifest.txt",
+    "sha256": "09773973f2845e3197046bac6cfda515d41ec44d845dc1fb1a627b9a400f4cdb",
+    "tokens": 820000,
+    "vintage": "2025-10..2026-06",
+    "languages": [
+      { "code": "en", "share": 0.76 },
+      { "code": "de", "share": 0.14 },
+      { "code": "other", "share": 0.10 }
+    ],
+    "annotator_labor": "credited",
+    "notes": [
+      "definitions were reviewed with support staff and affected users"
+    ]
+  },
+  "ontology": {
+    "name": "family",
+    "version": "users-2026-07",
+    "concepts": {
+      "chosen": "people intentionally recognized as family",
+      "extended": "relatives beyond the household",
+      "nuclear": "a household's primary care network, regardless of marital status",
+      "other": "relationships outside the family taxonomy"
+    }
+  },
+  "behavior": {
+    "cases": {
+      "chosen-caregiver": {
+        "input": "Alex names a non-relative chosen-family caregiver for household support.",
+        "classification": "chosen",
+        "route": "family-support"
+      }
+    }
+  }
+}

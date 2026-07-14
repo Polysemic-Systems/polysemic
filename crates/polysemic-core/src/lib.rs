@@ -121,11 +121,25 @@ impl<'a> Parser<'a> {
         if self.peek() == Some(b'-') {
             self.i += 1;
         }
-        while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
-            self.i += 1;
+        match self.peek() {
+            Some(b'0') => {
+                self.i += 1;
+                if matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    return Err(self.err("leading zero in number"));
+                }
+            }
+            Some(b'1'..=b'9') => {
+                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    self.i += 1;
+                }
+            }
+            _ => return Err(self.err("expected digit in number")),
         }
         if self.peek() == Some(b'.') {
             self.i += 1;
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err(self.err("expected digit after decimal point"));
+            }
             while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
                 self.i += 1;
             }
@@ -135,15 +149,21 @@ impl<'a> Parser<'a> {
             if matches!(self.peek(), Some(b'+' | b'-')) {
                 self.i += 1;
             }
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err(self.err("expected digit in exponent"));
+            }
             while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
                 self.i += 1;
             }
         }
         let s = std::str::from_utf8(&self.b[start..self.i]).unwrap();
-        s.parse::<f64>().map(Value::Num).map_err(|_| ParseError {
-            at: start,
-            msg: format!("invalid number `{s}`"),
-        })
+        match s.parse::<f64>() {
+            Ok(number) if number.is_finite() => Ok(Value::Num(number)),
+            _ => Err(ParseError {
+                at: start,
+                msg: format!("invalid or non-finite number `{s}`"),
+            }),
+        }
     }
 
     fn string(&mut self) -> Result<String, ParseError> {
@@ -180,14 +200,22 @@ impl<'a> Parser<'a> {
                                 {
                                     self.i += 2;
                                     let lo = self.hex4()?;
-                                    let c =
-                                        0x10000 + ((cp - 0xD800) << 10) + (lo.wrapping_sub(0xDC00));
-                                    char::from_u32(c).unwrap_or('\u{FFFD}')
+                                    if !(0xDC00..=0xDFFF).contains(&lo) {
+                                        return Err(self.err(
+                                            "high surrogate is not followed by a low surrogate",
+                                        ));
+                                    }
+                                    let c = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                    char::from_u32(c)
+                                        .ok_or_else(|| self.err("invalid unicode scalar value"))?
                                 } else {
-                                    '\u{FFFD}'
+                                    return Err(self.err("unpaired high surrogate"));
                                 }
+                            } else if (0xDC00..=0xDFFF).contains(&cp) {
+                                return Err(self.err("unpaired low surrogate"));
                             } else {
-                                char::from_u32(cp).unwrap_or('\u{FFFD}')
+                                char::from_u32(cp)
+                                    .ok_or_else(|| self.err("invalid unicode scalar value"))?
                             };
                             let mut buf = [0u8; 4];
                             out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
@@ -266,7 +294,9 @@ impl<'a> Parser<'a> {
             self.i += 1;
             self.ws();
             let val = self.value()?;
-            map.insert(key, val);
+            if map.insert(key.clone(), val).is_some() {
+                return Err(self.err(&format!("duplicate object key {key:?}")));
+            }
             self.ws();
             match self.peek() {
                 Some(b',') => self.i += 1,
@@ -355,5 +385,25 @@ mod tests {
     fn handles_unicode_escapes() {
         let v = parse(r#""\u00e9 \ud83d\ude00""#).unwrap();
         assert_eq!(v, Value::Str("é 😀".to_string()));
+    }
+
+    #[test]
+    fn rejects_duplicate_object_keys() {
+        let error = parse(r#"{"qty":2,"qty":3}"#).unwrap_err();
+        assert!(error.msg.contains("duplicate object key"));
+    }
+
+    #[test]
+    fn rejects_non_json_and_non_finite_numbers() {
+        for input in ["-", "01", "2.", "1e", "1e+", "1e999"] {
+            assert!(parse(input).is_err(), "accepted invalid number {input:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_unpaired_surrogates_without_panicking() {
+        for input in [r#""\ud800""#, r#""\ud800\u0041""#, r#""\udc00""#] {
+            assert!(parse(input).is_err(), "accepted invalid escape {input:?}");
+        }
     }
 }

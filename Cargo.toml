@@ -5,6 +5,7 @@ members = [
     "crates/digest",
     "crates/digest-poc",
     "crates/strata",
+    "crates/strata-poc",
     "crates/lethe",
     "crates/seam-demo",
 ]

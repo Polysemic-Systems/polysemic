@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strata — ontology observability | polysemic.systems</title>
+<meta name="description" content="Provenance labels, ontology drift detection, and a contestable constraint layer. Know whose history your model holds.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html">Digest</a>
+      <a href="strata.html" aria-current="page">Strata</a>
+      <a href="lethe.html">Lethe</a>
+      <a href="docs.html">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="docs.html">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="organ-stamp bl">Sediment</span>
+      <h1 class="display">Strata</h1>
+      <p class="lede">A model's categories aren't designed — they're sedimented from a particular corpus, written by particular people, at a particular time. Strata makes the sediment <strong>visible, versioned, and contestable.</strong></p>
+      <span class="install-line"><span class="dollar">$</span> cargo run --quiet -p strata-poc -- demo</span>
+    </div>
+  </section>
+
+  <div class="wrap">
+
+    <div class="split reveal">
+      <div class="s-text">
+        <h3>A shipping manifest for training data</h3>
+        <p>The model does not simply "know" — it remembers what a particular crowd once wrote. A <code class="inline">ProvenanceEnvelope</code> binds each ontology snapshot to corpus size, vintage, language shares, labor status, source URIs, and SHA-256 commitments. <strong>The comparison result retains both envelopes</strong>, so changed meaning cannot travel without its histories.</p>
+        <ul class="feat-list">
+          <li>Attach provenance to every versioned ontology artifact you ship</li>
+          <li>Renders as a nutrition-facts block in logs and model cards</li>
+          <li>Committed fixture bytes can be re-verified independently</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard">
+        <div class="cc-bar"><span>label output</span><span class="lang">strata::ProvenanceLabel</span></div>
+        <pre>┌─ PROVENANCE FACTS ────────────────
+│ corpus          prod-v4
+│ source          urn:polysemic:corpus:prod-v4
+│ corpus sha256   aaaaaaaa…
+│ serving size    2.4T tokens
+│ vintage         mostly post-1996
+│ language        en: 87%
+│ language        other: 13%
+│ annotator labor present, credited
+│ ⚠ categories settled during training;
+│   check before shipping
+└───────────────────────────────────</pre>
+      </aside>
+    </div>
+
+    <div class="split flip reveal">
+      <div class="s-text">
+        <h3>Compare snapshots without losing their histories</h3>
+        <p>The standalone proof compares two strict provenance envelopes, probes the same concept, and replays the same recorded case across both versions. <strong>Drift becomes concrete and routable</strong>: the case changes from <code class="inline">other / manual-review</code> to <code class="inline">chosen / family-support</code>.</p>
+        <ul class="feat-list">
+          <li><code>+chosen</code>, <code>-single_parent</code>, <code>~nuclear</code></li>
+          <li>Behavior probe exposes the changed classification and route</li>
+          <li>Different artifacts, ontologies, and unknown probes are rejected</li>
+          <li>Exit status 2 routes drift to an accountable owner</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard">
+        <div class="cc-bar"><span>standalone proof</span><span class="lang">strata-poc</span></div>
+        <pre><span class="kw">$</span> cargo run --quiet -p strata-poc -- demo
+
+<span class="cm">"status": "drift_detected"</span>
+<span class="cm">"added": ["chosen"]</span>
+<span class="cm">"removed": ["single_parent"]</span>
+<span class="cm">"redefined": ["nuclear"]</span>
+<span class="cm">"behavior_probe": {</span>
+  <span class="cm">"case_id": "chosen-caregiver",</span>
+  <span class="cm">"baseline": {"classification":"other"},</span>
+  <span class="cm">"observed": {"classification":"chosen"},</span>
+  <span class="cm">"changed": true</span>
+<span class="cm">}</span></pre>
+      </aside>
+    </div>
+
+    <div class="split reveal" style="border-bottom:none">
+      <div class="s-text">
+        <h3>The legislated layer over the grown one</h3>
+        <p>Where the sediment is wrong for your users, you overrule it — explicitly. Every rule in the <code class="inline">Legislature</code> carries a stated <strong>reason</strong>, because an override without a reason is just a different unaccountable ontology. And every resolution names which layer answered.</p>
+        <ul class="feat-list">
+          <li>Enact and repeal are equally first-class</li>
+          <li>Source::Grown vs Source::Legislated on every answer</li>
+          <li>The audit trail your "AI governance" slide claims you have</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard">
+        <div class="cc-bar"><span>governance.rs</span><span class="lang">strata::Legislature</span></div>
+        <pre><span class="kw">let mut</span> law = Legislature::<span class="fn">new</span>();
+law.<span class="fn">enact</span>(<span class="st">"units"</span>, <span class="st">"metric"</span>,
+          <span class="st">"product ships in the EU"</span>);
+
+law.<span class="fn">resolve</span>(<span class="st">"units"</span>, <span class="st">"imperial"</span>)
+<span class="cm">// → metric (legislated: product ships in the EU)</span>
+
+law.<span class="fn">resolve</span>(<span class="st">"size"</span>, <span class="st">"double"</span>)
+<span class="cm">// → double (grown)</span></pre>
+      </aside>
+    </div>
+
+  </div>
+
+  <section class="cta wrap">
+    <div class="cta-box reveal">
+      <h2>Stop pretending the model's output is neutral fact.</h2>
+      <p>Strata is the inspectable, contestable layer between your model's history and your users' present. Grown meaning answers by default; legislated rules overrule it where someone has taken responsibility.</p>
+      <div class="row">
+        <a class="btn" href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/strata-poc" target="_blank" rel="noreferrer">Run the Strata POC ↗</a>
+        <a class="btn ghost" href="docs.html">Quickstart</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

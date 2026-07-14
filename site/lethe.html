@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lethe — the delete path | polysemic.systems</title>
+<meta name="description" content="Memory lifecycle for AI systems: TTLs, salience decay, scheduled sweeps, and receipted erasure. Forgetting is a faculty, not a failure.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <a class="wordmark" href="index.html">polysemic<span class="dot">.</span>systems</a>
+    <nav aria-label="Main">
+      <a href="digest.html">Digest</a>
+      <a href="strata.html">Strata</a>
+      <a href="lethe.html" aria-current="page">Lethe</a>
+      <a href="docs.html">docs</a>
+      <a href="manifesto.html">manifesto</a>
+      <a href="pricing.html">pricing</a>
+      <a href="about.html">about</a>
+      <a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="navbtn" href="docs.html">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-hero">
+    <div class="wrap">
+      <span class="organ-stamp ik">Excretion</span>
+      <h1 class="display">Lethe</h1>
+      <p class="lede">A system that can only accumulate isn't learning — it's hoarding. Lethe is forgetting as a first-class, designed faculty: <strong>nothing enters without knowing how it will leave.</strong></p>
+      <span class="install-line"><span class="dollar">$</span> python3 examples/lethe-stores/lethe_poc.py demo</span>
+    </div>
+  </section>
+
+  <div class="wrap">
+
+    <div class="split reveal">
+      <div class="s-text">
+        <h3>TTL is mandatory. Immortality is opt-in.</h3>
+        <p><code class="inline">remember()</code> takes a TTL as a required argument — the type system won't let a memory into the store without an exit plan. Most memory bugs in agent systems are memories nobody decided to keep; <strong>Lethe makes keeping a decision.</strong></p>
+        <ul class="feat-list">
+          <li>TTL required at write time, per memory</li>
+          <li>Named retention policies travel with every governed memory</li>
+          <li>Time injected everywhere — the whole lifecycle is testable</li>
+          <li>Subject-keyed storage, ready for per-user erasure</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard">
+        <div class="cc-bar"><span>remember.rs</span><span class="lang">lethe::Lethe</span></div>
+        <pre><span class="kw">let mut</span> memory = Lethe::<span class="fn">new</span>(
+    Duration::from_secs(<span class="st">3600</span>), <span class="st">0.05</span>
+);
+<span class="kw">let</span> policy = RetentionPolicy::<span class="fn">new</span>(
+    <span class="st">"customer-preference-v1"</span>,
+    Duration::from_secs(<span class="st">90</span> * <span class="st">24</span> * <span class="st">3600</span>),
+);
+<span class="kw">let</span> now = Instant::<span class="fn">now</span>();
+
+memory.<span class="fn">remember_with_policy</span>(
+    <span class="st">"user:8842"</span>,
+    <span class="st">"prefers oat milk"</span>,
+    &policy,
+    now,
+);</pre>
+      </aside>
+    </div>
+
+    <div class="split flip reveal">
+      <div class="s-text">
+        <h3>Use it or lose it: salience with a half-life</h3>
+        <p>Every memory's salience decays exponentially unless recall reinforces it — recall <em>is</em> use, and use is what keeps a memory alive. The scheduled <code class="inline">sweep()</code> releases everything expired or faded. <strong>The context window is a garden, not a warehouse;</strong> this is the pruning shears.</p>
+        <ul class="feat-list">
+          <li>Exponential decay by configurable half-life</li>
+          <li>Recall touches and reinforces, capped to prevent immortals</li>
+          <li>Sweep reports what left and why, with a deletion receipt</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard">
+        <div class="cc-bar"><span>sweep.rs</span><span class="lang">lethe::sweep</span></div>
+        <pre>memory.<span class="fn">recall</span>(<span class="st">"espresso"</span>, now)
+<span class="cm">// touched: salience reinforced, clock reset</span>
+
+<span class="kw">let</span> receipt = memory.<span class="fn">sweep_with_receipt</span>(now);
+<span class="cm">// → 1 expired, 2 faded — lethe://sweep/…</span>
+<span class="cm">// the garden, pruned and receipted.</span></pre>
+      </aside>
+    </div>
+
+    <div class="split reveal" style="border-bottom:none">
+      <div class="s-text">
+        <h3>Erasure across real stores, with independent receipts</h3>
+        <p>The standalone proof writes one subject to PostgreSQL+pgvector and Redis, erases it from both, and re-verifies absence before declaring success. <strong>Each store returns its own SHA-256 receipt</strong>, then the coordinator commits the complete or partial outcome into an aggregate receipt.</p>
+        <ul class="feat-list">
+          <li>PostgreSQL uses DELETE … RETURNING beside pgvector embeddings</li>
+          <li>Redis erases indexed keys and verifies logical absence</li>
+          <li>Idempotent replay returns the original receipts</li>
+          <li>Request IDs are reserved before deletion, so conflicts lose safely</li>
+          <li>Unrelated memories must survive the proof</li>
+        </ul>
+      </div>
+      <aside class="s-code codecard">
+        <div class="cc-bar"><span>store proof</span><span class="lang">lethe-poc</span></div>
+        <pre><span class="kw">$</span> python3 examples/lethe-stores/lethe_poc.py demo
+
+<span class="cm">postgres-pgvector: erased, verified absent</span>
+<span class="cm">redis: erased, verified absent</span>
+<span class="cm">aggregate: complete — lethe://request/…</span>
+
+<span class="cm">Cross-store erasure complete: yes</span>
+<span class="cm">Idempotent request replay: yes</span>
+<span class="cm">Conflicting subject protected: yes</span>
+<span class="cm">Unrelated memory preserved: yes</span></pre>
+      </aside>
+    </div>
+
+  </div>
+
+  <section class="cta wrap">
+    <div class="cta-box reveal">
+      <h2>Build the delete path before you need it.</h2>
+      <p>A faculty designed beats a failure discovered. Lethe gives every layer of your stack a way to shed — and a way to prove it did.</p>
+      <div class="row">
+        <a class="btn" href="https://github.com/Polysemic-Systems/polysemic/tree/main/examples/lethe-stores" target="_blank" rel="noreferrer">Run the Lethe POC ↗</a>
+        <a class="btn ghost" href="docs.html">Quickstart</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <p class="slogan">Digest the contradiction.<span class="sep">·</span>Own the sediment.<span class="sep">·</span>Bless the delete key.</p>
+    <p class="foot-meta"><a href="https://github.com/Polysemic-Systems/polysemic" target="_blank" rel="noreferrer">GitHub</a> · © 2026 polysemic.systems</p>
+  </div>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

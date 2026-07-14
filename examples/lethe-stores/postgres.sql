@@ -20,7 +20,13 @@ CREATE TABLE IF NOT EXISTS lethe_erasure_requests (
     store text NOT NULL,
     request_id text NOT NULL,
     subject_digest text NOT NULL,
-    result_json text NOT NULL,
+    result_json text,
+    reservation_token text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (store, request_id)
 );
+
+-- Keep existing POC volumes forward-compatible with the reservation protocol.
+ALTER TABLE lethe_erasure_requests
+    ALTER COLUMN result_json DROP NOT NULL,
+    ADD COLUMN IF NOT EXISTS reservation_token text;

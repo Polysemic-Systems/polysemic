@@ -4,6 +4,10 @@
 
 Infrastructure for systems that are alive. Three organs, zero dependencies.
 
+The versioned static website lives in [`site/`](site/). CI parses every page,
+checks local links, and prevents nonexistent GitLab or unrelated crates.io
+installation instructions from returning.
+
 > Digest the contradiction. Own the sediment. Bless the delete key.
 
 ## The triad
@@ -11,7 +15,7 @@ Infrastructure for systems that are alive. Three organs, zero dependencies.
 | Crate | Organ | What it does |
 |---|---|---|
 | `digest` | **metabolism** | The seam layer. Repairs malformed model output with every fix *named*; converts genuine ambiguity into a `Question`; applies answers only to requested paths with a separate answer ledger; reconciles multiple samples by field-wise majority. |
-| `strata` | **sediment** | Ontology observability. `ProvenanceLabel` names the corpus; `DriftWatch` measures distribution drift; versioned `OntologySnapshot`s expose added, removed, and redefined concepts; `Legislature` is the contestable constraint layer. |
+| `strata` | **sediment** | Ontology observability. `ProvenanceEnvelope` keeps corpus history attached to versioned `OntologySnapshot`s; comparisons expose added, removed, and redefined concepts; `DriftWatch` measures distribution drift; `Legislature` is the contestable constraint layer. |
 | `lethe` | **excretion** | The delete path. Every memory has a TTL and can carry a named `RetentionPolicy`; salience decays unless recall reinforces it; scheduled sweeps and on-demand erasure both return receipts; the open-core `ErasureAdapter` contract coordinates verified deletion across durable stores. |
 | `polysemic-core` | — | The univocal interior: a strict JSON `Value` and parser. Polysemy lives at the boundary, where it belongs. |
 
@@ -46,6 +50,7 @@ The diagnosis is evidence-led, not branding-led: a system can suffer more than o
 cargo test              # all crates
 cargo run -p seam-demo  # the hero terminal, live
 cargo run -p digest-poc -- demo  # Digest as a standalone seam
+cargo run -p strata-poc -- demo  # Strata as a standalone drift proof
 ```
 
 The demo pushes one realistic mess through all three organs:
@@ -72,6 +77,19 @@ status; stable repair codes; structured questions; and a separate answer
 ledger. Clarification has a distinct exit status, so an agent runner can route
 the question instead of crashing or guessing. See the
 [`Digest seam quickstart`](examples/digest-poc/README.md).
+
+## Strata in five minutes: provenance-bound meaning
+
+```sh
+cargo run --quiet -p strata-poc -- demo
+```
+
+The standalone POC compares two ontology snapshots that each carry artifact
+and corpus provenance with externally verifiable SHA-256 commitments. It emits
+one JSON report with added, removed, and redefined concepts, then replays the
+same recorded case to expose a concrete classification and route change. Drift
+has a distinct exit status so a runner can route it to an accountable owner. See the
+[`Strata provenance and drift quickstart`](examples/strata-poc/README.md).
 
 ## Lethe in five minutes: two real stores
 

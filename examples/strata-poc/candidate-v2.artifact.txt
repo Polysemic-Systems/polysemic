@@ -1,0 +1,5 @@
+artifact_id=family-support-router
+artifact_version=candidate-v2
+behavior_case=chosen-caregiver
+classification=chosen
+route=family-support

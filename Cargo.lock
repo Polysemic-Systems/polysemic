@@ -38,3 +38,11 @@ dependencies = [
 [[package]]
 name = "strata"
 version = "0.1.0"
+
+[[package]]
+name = "strata-poc"
+version = "0.1.0"
+dependencies = [
+ "polysemic-core",
+ "strata",
+]

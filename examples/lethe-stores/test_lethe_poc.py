@@ -36,8 +36,21 @@ def echo_psql_saved_result(compose, _service, _args, _input_text):
     raise AssertionError("no saved PostgreSQL result found")
 
 
+def echo_psql_reservation(_compose, _service, args, _input_text):
+    variables = {
+        argument.removeprefix("--set=").split("=", 1)[0]: argument.split("=", 2)[-1]
+        for argument in args
+        if argument.startswith("--set=")
+    }
+    return f"{variables['subject_digest']}||{variables['reservation_token']}\n"
+
+
 def echo_redis_saved_result(_compose, _service, args, _input_text):
     return f"{args[-1]}\n"
+
+
+def echo_redis_reservation(_compose, _service, args, _input_text):
+    return f"{args[-2]}\n\n{args[-1]}\n"
 
 
 class ReceiptTests(unittest.TestCase):
@@ -78,7 +91,12 @@ class ReceiptTests(unittest.TestCase):
 
     def test_postgres_delete_rows_become_a_receipt(self):
         compose = FakeCompose(
-            ["", "id-1|Y29udGVudA==|cG9saWN5\n", "0\n", "", echo_psql_saved_result]
+            [
+                echo_psql_reservation,
+                "id-1|Y29udGVudA==|cG9saWN5\n",
+                "0\n",
+                echo_psql_saved_result,
+            ]
         )
         store = lethe_poc.PostgresStore(compose)
 
@@ -92,8 +110,21 @@ class ReceiptTests(unittest.TestCase):
         self.assertNotIn("--command", command)
         self.assertIn(":'subject_b64'", compose.calls[1][2])
 
-        compose.responses.append(f"{lethe_poc._b64(receipt.to_json())}\n")
+        compose.responses.append(
+            f"{receipt.subject_digest}|{lethe_poc._b64(receipt.to_json())}|\n"
+        )
         self.assertEqual(store.erase_subject("user:1", "request-1"), receipt)
+
+    def test_postgres_conflict_is_rejected_before_delete(self):
+        other_digest = lethe_poc.subject_commitment("user:other")
+        compose = FakeCompose([f"{other_digest}||another-owner\n"])
+        store = lethe_poc.PostgresStore(compose)
+
+        with self.assertRaises(lethe_poc.IdempotencyConflict):
+            store.erase_subject("user:1", "request-1")
+
+        self.assertEqual(len(compose.calls), 1)
+        self.assertNotIn("DELETE FROM lethe_memories", compose.calls[0][2])
 
     def test_redis_subject_index_does_not_expose_the_subject(self):
         index = lethe_poc.RedisStore._subject_index("user:private")
@@ -104,7 +135,7 @@ class ReceiptTests(unittest.TestCase):
     def test_redis_delete_response_becomes_a_receipt(self):
         compose = FakeCompose(
             [
-                "",
+                echo_redis_reservation,
                 "lethe:memory:id-1\nY29udGVudA==\ncG9saWN5\n",
                 "",
                 echo_redis_saved_result,
@@ -121,8 +152,22 @@ class ReceiptTests(unittest.TestCase):
             any("UNLINK" in call[1][3] for call in compose.calls if len(call[1]) > 3)
         )
 
-        compose.responses.append(f"{lethe_poc._b64(receipt.to_json())}\n")
+        compose.responses.append(
+            f"{receipt.subject_digest}\n{lethe_poc._b64(receipt.to_json())}\n\n"
+        )
         self.assertEqual(store.erase_subject("user:1", "request-1"), receipt)
+
+    def test_redis_conflict_is_rejected_before_delete(self):
+        other_digest = lethe_poc.subject_commitment("user:other")
+        compose = FakeCompose([f"{other_digest}\n\nanother-owner\n"])
+        store = lethe_poc.RedisStore(compose)
+
+        with self.assertRaises(lethe_poc.IdempotencyConflict):
+            store.erase_subject("user:1", "request-1")
+
+        self.assertEqual(len(compose.calls), 1)
+        self.assertIn(lethe_poc.REDIS_RESERVE_ERASURE_LUA, compose.calls[0][1])
+        self.assertNotIn(lethe_poc.REDIS_FORGET_LUA, compose.calls[0][1])
 
     def test_redis_sweep_reports_memories_lost_to_hard_expiry(self):
         compose = FakeCompose(["2\nlethe:memory:id-1\nYQ==\ncDE=\n"])
