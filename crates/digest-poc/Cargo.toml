@@ -1,0 +1,14 @@
+[package]
+name = "digest-poc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A machine-usable seam proof for Digest."
+
+[dependencies]
+polysemic-core = { path = "../polysemic-core" }
+digest = { path = "../digest" }
+
+[[bin]]
+name = "digest-poc"
+path = "src/main.rs"

@@ -70,6 +70,24 @@ impl fmt::Display for Repair {
     }
 }
 
+impl Repair {
+    /// Stable machine-readable name for this repair. Human-readable wording
+    /// may evolve; this code is suitable for logs, policies, and metrics.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Repair::StrippedFence => "stripped_fence",
+            Repair::StrippedProse => "stripped_prose",
+            Repair::PythonLiterals => "python_literals",
+            Repair::RequotedStrings => "requoted_strings",
+            Repair::QuotedKeys => "quoted_keys",
+            Repair::RemovedTrailingCommas => "removed_trailing_commas",
+            Repair::Coerced { .. } => "coerced",
+            Repair::HedgeResolved { .. } => "hedge_resolved",
+            Repair::CaseFolded { .. } => "case_folded",
+        }
+    }
+}
+
 /// An ambiguity the system could not — and should not — resolve alone.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Question {
@@ -188,6 +206,23 @@ pub enum Schema {
     Obj(Vec<Field>),
 }
 
+/// A JSON Schema document asked Digest to enforce something outside its
+/// deliberately small, explicit subset. Rejecting unsupported constraints is
+/// safer than silently pretending they were applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaError {
+    pub path: String,
+    pub message: String,
+}
+
+impl fmt::Display for SchemaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "schema error at {}: {}", self.path, self.message)
+    }
+}
+
+impl std::error::Error for SchemaError {}
+
 #[derive(Debug, Clone)]
 pub struct Field {
     pub name: String,
@@ -214,6 +249,20 @@ impl Schema {
     pub fn obj(fields: impl IntoIterator<Item = Field>) -> Schema {
         Schema::Obj(fields.into_iter().collect())
     }
+
+    /// Parse the JSON Schema subset supported by the Digest POC.
+    ///
+    /// Supported forms are `string`, `number` with `minimum`/`maximum`,
+    /// `boolean`, arrays with `items`, objects with `properties`/`required`,
+    /// and string `enum`s. `{}` means [`Schema::Any`]. Unsupported keywords
+    /// are rejected so callers never receive a false validation guarantee.
+    pub fn from_json_schema(raw: &str) -> Result<Schema, SchemaError> {
+        let value = parse(raw).map_err(|error| SchemaError {
+            path: "$".into(),
+            message: error.to_string(),
+        })?;
+        schema_from_value(&value, "$schema")
+    }
 }
 
 impl Field {
@@ -230,6 +279,199 @@ impl Field {
             schema,
             required: false,
         }
+    }
+}
+
+fn schema_from_value(value: &Value, path: &str) -> Result<Schema, SchemaError> {
+    let Value::Obj(object) = value else {
+        return Err(schema_error(path, "expected a JSON object"));
+    };
+
+    let constraint_keys: Vec<&str> = object
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !matches!(*key, "$schema" | "$id" | "title" | "description"))
+        .collect();
+    if constraint_keys.is_empty() {
+        return Ok(Schema::Any);
+    }
+
+    if let Some(choices) = object.get("enum") {
+        reject_unknown_schema_keys(object, &["enum", "type"], path)?;
+        match object.get("type") {
+            Some(Value::Str(schema_type)) if schema_type == "string" => {}
+            Some(Value::Str(schema_type)) => {
+                return Err(schema_error(
+                    &format!("{path}.type"),
+                    &format!("string enum cannot declare type {schema_type:?}"),
+                ))
+            }
+            Some(_) => return Err(schema_error(&format!("{path}.type"), "expected a string")),
+            None => {}
+        }
+        let Value::Arr(choices) = choices else {
+            return Err(schema_error(&format!("{path}.enum"), "expected an array"));
+        };
+        if choices.is_empty() {
+            return Err(schema_error(
+                &format!("{path}.enum"),
+                "expected at least one choice",
+            ));
+        }
+        let mut strings = Vec::with_capacity(choices.len());
+        for (index, choice) in choices.iter().enumerate() {
+            let Value::Str(choice) = choice else {
+                return Err(schema_error(
+                    &format!("{path}.enum[{index}]"),
+                    "Digest currently supports string enum values only",
+                ));
+            };
+            strings.push(choice.clone());
+        }
+        return Ok(Schema::Choice(strings));
+    }
+
+    let schema_type = match object.get("type") {
+        Some(Value::Str(schema_type)) => schema_type.as_str(),
+        Some(_) => return Err(schema_error(&format!("{path}.type"), "expected a string")),
+        None => return Err(schema_error(path, "missing `type` or `enum`")),
+    };
+
+    match schema_type {
+        "string" => {
+            reject_unknown_schema_keys(object, &["type"], path)?;
+            Ok(Schema::Str)
+        }
+        "boolean" => {
+            reject_unknown_schema_keys(object, &["type"], path)?;
+            Ok(Schema::Bool)
+        }
+        "number" => {
+            reject_unknown_schema_keys(object, &["type", "minimum", "maximum"], path)?;
+            let min = optional_finite_number(object.get("minimum"), &format!("{path}.minimum"))?;
+            let max = optional_finite_number(object.get("maximum"), &format!("{path}.maximum"))?;
+            if min.zip(max).is_some_and(|(min, max)| min > max) {
+                return Err(schema_error(path, "`minimum` cannot exceed `maximum`"));
+            }
+            Ok(Schema::Num { min, max })
+        }
+        "array" => {
+            reject_unknown_schema_keys(object, &["type", "items"], path)?;
+            let items = object
+                .get("items")
+                .ok_or_else(|| schema_error(path, "array schema is missing `items`"))?;
+            Ok(Schema::Arr(Box::new(schema_from_value(
+                items,
+                &format!("{path}.items"),
+            )?)))
+        }
+        "object" => {
+            reject_unknown_schema_keys(object, &["type", "properties", "required"], path)?;
+            let properties = match object.get("properties") {
+                Some(Value::Obj(properties)) => properties,
+                Some(_) => {
+                    return Err(schema_error(
+                        &format!("{path}.properties"),
+                        "expected an object",
+                    ))
+                }
+                None => return Err(schema_error(path, "object schema is missing `properties`")),
+            };
+            let required = parse_required(object.get("required"), path)?;
+            for name in &required {
+                if !properties.contains_key(name) {
+                    return Err(schema_error(
+                        &format!("{path}.required"),
+                        &format!("{name:?} is not declared in `properties`"),
+                    ));
+                }
+            }
+            let mut fields = Vec::with_capacity(properties.len());
+            for (name, property) in properties {
+                if name.is_empty() || name.contains('.') || name.contains('[') {
+                    return Err(schema_error(
+                        &format!("{path}.properties"),
+                        &format!(
+                            "property name {name:?} cannot be represented by the POC answer-path syntax"
+                        ),
+                    ));
+                }
+                fields.push(Field {
+                    name: name.clone(),
+                    schema: schema_from_value(property, &format!("{path}.properties.{name}"))?,
+                    required: required.contains(name),
+                });
+            }
+            Ok(Schema::Obj(fields))
+        }
+        other => Err(schema_error(
+            &format!("{path}.type"),
+            &format!("unsupported type {other:?}"),
+        )),
+    }
+}
+
+fn reject_unknown_schema_keys(
+    object: &BTreeMap<String, Value>,
+    allowed: &[&str],
+    path: &str,
+) -> Result<(), SchemaError> {
+    for key in object.keys() {
+        let metadata = matches!(key.as_str(), "$schema" | "$id" | "title" | "description");
+        if !metadata && !allowed.contains(&key.as_str()) {
+            return Err(schema_error(
+                &format!("{path}.{key}"),
+                "unsupported keyword; Digest refuses to ignore constraints silently",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn optional_finite_number(value: Option<&Value>, path: &str) -> Result<Option<f64>, SchemaError> {
+    match value {
+        None => Ok(None),
+        Some(Value::Num(number)) if number.is_finite() => Ok(Some(*number)),
+        Some(Value::Num(_)) => Err(schema_error(path, "expected a finite number")),
+        Some(_) => Err(schema_error(path, "expected a number")),
+    }
+}
+
+fn parse_required(
+    value: Option<&Value>,
+    path: &str,
+) -> Result<std::collections::BTreeSet<String>, SchemaError> {
+    let mut required = std::collections::BTreeSet::new();
+    let Some(value) = value else {
+        return Ok(required);
+    };
+    let Value::Arr(items) = value else {
+        return Err(schema_error(
+            &format!("{path}.required"),
+            "expected an array",
+        ));
+    };
+    for (index, item) in items.iter().enumerate() {
+        let Value::Str(name) = item else {
+            return Err(schema_error(
+                &format!("{path}.required[{index}]"),
+                "expected a property name",
+            ));
+        };
+        if !required.insert(name.clone()) {
+            return Err(schema_error(
+                &format!("{path}.required[{index}]"),
+                &format!("duplicate property {name:?}"),
+            ));
+        }
+    }
+    Ok(required)
+}
+
+fn schema_error(path: &str, message: &str) -> SchemaError {
+    SchemaError {
+        path: path.to_string(),
+        message: message.to_string(),
     }
 }
 
@@ -325,7 +567,7 @@ fn set_json_path(root: &mut Value, path: &str, replacement: Value) -> Result<(),
         })?;
     }
     match (segments.last(), current) {
-        (Some(PathSegment::Key(key)), Value::Obj(object)) if object.contains_key(key) => {
+        (Some(PathSegment::Key(key)), Value::Obj(object)) => {
             object.insert(key.clone(), replacement);
             Ok(())
         }
@@ -1173,6 +1415,24 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_required_field_can_be_answered() {
+        let raw = r#"{"item": "espresso"}"#;
+        let d = digest_with_answers(
+            raw,
+            &order_schema(),
+            [Answer::new("$.qty", Value::Num(2.0))],
+        )
+        .unwrap();
+
+        match d.outcome {
+            Outcome::Resolved(Value::Obj(object)) => {
+                assert_eq!(object.get("qty"), Some(&Value::Num(2.0)));
+            }
+            other => panic!("expected answered value, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn answers_cannot_mutate_paths_digest_did_not_question() {
         let raw = r#"{"item": "espresso", "qty": "2 or 3"}"#;
         let error = digest_with_answers(
@@ -1253,6 +1513,48 @@ mod tests {
         let d = digest(raw, &order_schema()).unwrap();
         assert!(d.is_resolved());
         assert!(d.repairs.contains(&Repair::QuotedKeys));
+    }
+
+    #[test]
+    fn json_schema_subset_drives_digestion() {
+        let schema = Schema::from_json_schema(
+            r#"{
+                "type": "object",
+                "properties": {
+                    "item": {"type": "string"},
+                    "qty": {"type": "number", "minimum": 1, "maximum": 99},
+                    "gift_wrap": {"type": "boolean"},
+                    "size": {"enum": ["small", "double", "triple"]}
+                },
+                "required": ["item", "qty"]
+            }"#,
+        )
+        .unwrap();
+
+        let d = digest(
+            r#"{"item":"espresso","qty":"2 or 3","size":"DOUBLE"}"#,
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(d.repairs[0].code(), "case_folded");
+        assert!(matches!(d.outcome, Outcome::Clarify(_)));
+    }
+
+    #[test]
+    fn unsupported_schema_constraints_are_rejected() {
+        let error =
+            Schema::from_json_schema(r#"{"type":"string","pattern":"^[a-z]+$"}"#).unwrap_err();
+
+        assert_eq!(error.path, "$schema.pattern");
+        assert!(error.message.contains("refuses to ignore"));
+    }
+
+    #[test]
+    fn invalid_schema_range_is_rejected() {
+        let error =
+            Schema::from_json_schema(r#"{"type":"number","minimum":10,"maximum":1}"#).unwrap_err();
+
+        assert!(error.message.contains("minimum"));
     }
 
     #[test]
