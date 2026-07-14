@@ -65,5 +65,10 @@ schemas mean `any`. Unsupported constraint keywords are rejected rather than
 silently ignored. Object property names cannot contain `.` or `[` because the
 POC uses simple `$.field` answer paths.
 
+Numbers are accepted only when the core can round-trip their mathematical JSON
+value exactly. Inputs such as `9007199254740993` or `1e-999`, which an `f64`
+would silently round or underflow, are rejected instead of being returned as a
+different resolved value. Negative zero is preserved.
+
 This is intentionally not a complete JSON Schema implementation. It is the
 smallest proof of the runtime seam and its escalation contract.

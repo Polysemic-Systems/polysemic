@@ -1,0 +1,11 @@
+{
+  "format": "strata-cases/v1",
+  "cases": {
+    "chosen-caregiver": {
+      "input": "Alex names a non-relative chosen-family caregiver for household support."
+    },
+    "relative-caregiver": {
+      "input": "Alex names an aunt as a relative caregiver for household support."
+    }
+  }
+}

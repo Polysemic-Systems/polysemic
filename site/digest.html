@@ -78,6 +78,7 @@
           <li><code>"~5"</code>, <code>"about 5"</code> → hedge resolved, with the original kept</li>
           <li><code>"2 or 3"</code>, <code>"2-3"</code> → a Question with candidates</li>
           <li><code>"a few"</code> → an open Question, honestly posed</li>
+          <li>Numbers that would round or underflow are rejected, never silently changed</li>
           <li>Answers apply only to questioned paths and live in a separate answer ledger</li>
         </ul>
       </div>
@@ -114,7 +115,7 @@
     <div class="split flip reveal" style="border-bottom:none">
       <div class="s-text">
         <h3>Sample several times, commit once</h3>
-        <p>For high-stakes calls, <code class="inline">reconcile()</code> digests multiple samples and treats the model's variance as polysemy, not noise: <strong>field-wise majority commits; dissent becomes a question</strong> with the disagreeing readings as candidates.</p>
+        <p>For high-stakes calls, <code class="inline">reconcile()</code> digests multiple samples and treats the model's variance as polysemy, not noise: <strong>field-wise majority commits; dissent becomes a question</strong> with every disagreeing candidate retained. An empty sample set is rejected.</p>
         <ul class="feat-list">
           <li>Unanimity fast-path; field-level majority for objects</li>
           <li>No majority → Clarify, never a silent pick</li>

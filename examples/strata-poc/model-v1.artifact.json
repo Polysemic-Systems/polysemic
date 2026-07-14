@@ -1,0 +1,10 @@
+{
+  "format": "strata-router/v1",
+  "artifact_id": "family-support-router",
+  "artifact_version": "model-v1",
+  "rules": [],
+  "default": {
+    "classification": "other",
+    "route": "manual-review"
+  }
+}

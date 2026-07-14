@@ -122,8 +122,8 @@
 
 <span class="kw">let</span> baseline = ProvenanceEnvelope::new(
     <span class="st">"family-support-router"</span>, <span class="st">"model-v1"</span>,
-    <span class="st">"examples/strata-poc/model-v1.artifact.txt"</span>,
-    <span class="st">"5e5474809c937330a856de5a705890d26b68a7c8be21f7658f616cfeed18e570"</span>,
+    <span class="st">"examples/strata-poc/model-v1.artifact.json"</span>,
+    <span class="st">"c46701df82ea273c52dfbaabb32a6d0ebed76a7b1bb283a28270529da7e0f208"</span>,
     ProvenanceLabel {
         corpus: <span class="st">"archived-support-tickets"</span>.into(),
         source_uri: <span class="st">"examples/strata-poc/archived-support-tickets.manifest.txt"</span>.into(),
@@ -152,8 +152,8 @@
 };
 <span class="kw">let</span> observed = ProvenanceEnvelope::new(
     <span class="st">"family-support-router"</span>, <span class="st">"candidate-v2"</span>,
-    <span class="st">"examples/strata-poc/candidate-v2.artifact.txt"</span>,
-    <span class="st">"0ad6b0a29456adb13f2aa5c5b5752aaa0717fe553a80e29d0661e83dd1db9cf9"</span>,
+    <span class="st">"examples/strata-poc/candidate-v2.artifact.json"</span>,
+    <span class="st">"229f9c92872dcd0adef98e938ea25516538ee1e5fd41fe1dec81478579ac96a3"</span>,
     observed_label,
     OntologySnapshot::new(<span class="st">"family"</span>, <span class="st">"users-2026-07"</span>, [
         (<span class="st">"nuclear"</span>, <span class="st">"a household's primary care network"</span>),
@@ -188,7 +188,7 @@ memory.sweep_with_receipt(now); <span class="cm">// the garden, pruned and recei
       <table>
         <tr><th>Call</th><th>What it guarantees</th></tr>
         <tr><td>digest(raw, &schema)</td><td>A trusted value or explicit questions — never a value you can't trust. All repairs named.</td></tr>
-        <tr><td>reconcile(&samples, &schema)</td><td>Majority commits, dissent asks. Per-sample digestions returned for audit.</td></tr>
+        <tr><td>reconcile(&samples, &schema)</td><td>Majority commits; dissent merges all candidates; empty input is rejected. Per-sample digestions are retained.</td></tr>
         <tr><td>ProvenanceEnvelope::compare</td><td>Ontology drift plus a concept probe, with both corpus and labor histories retained.</td></tr>
         <tr><td>DriftWatch::compare</td><td>A 0–1 total-variation result or an explicit error for negative, non-finite, or empty distributions.</td></tr>
         <tr><td>Legislature::resolve</td><td>Every answer names its layer: grown or legislated-with-reason.</td></tr>
@@ -198,7 +198,7 @@ memory.sweep_with_receipt(now); <span class="cm">// the garden, pruned and recei
       </table>
 
       <h2>Honest limitations</h2>
-      <p class="muted">The open-source cores are deliberately small: Digest supports an explicit JSON Schema subset; Strata's ontology diff compares normalized text while its separate behavior probe replays a recorded case; Strata's SHA-256 commitments prove fixture integrity, not signer identity; core receipts use FNV-1a while the Lethe store proof uses SHA-256; and the PostgreSQL+pgvector and Redis adapters shell into version-pinned local containers rather than native drivers. The seams where you'd extend them are marked in the doc comments.</p>
+      <p class="muted">The open-source cores are deliberately small: Digest supports an explicit JSON Schema subset and rejects numbers that cannot round-trip exactly; Strata's ontology diff compares normalized text while its behavior proof executes a committed deterministic router rather than a general model runtime; SHA-256 proves fixture integrity, not signer identity; core receipts use FNV-1a while the Lethe store proof uses SHA-256; and the PostgreSQL+pgvector and Redis adapters shell into version-pinned local containers rather than native drivers. The seams where you'd extend them are marked in the doc comments.</p>
 
     </div>
   </article>

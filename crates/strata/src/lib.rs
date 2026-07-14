@@ -349,6 +349,11 @@ pub struct ProvenanceEnvelope {
     pub artifact_sha256: String,
     pub provenance: ProvenanceLabel,
     pub ontology: OntologySnapshot,
+    /// Stable location of the behavior-case corpus replayed by a runner.
+    pub behavior_uri: String,
+    /// SHA-256 commitment to the exact behavior-case corpus.
+    pub behavior_sha256: String,
+    /// Runner observations materialized from the committed artifact and cases.
     pub behavior_cases: BTreeMap<String, BehaviorReading>,
 }
 
@@ -368,8 +373,16 @@ impl ProvenanceEnvelope {
             artifact_sha256: artifact_sha256.to_string(),
             provenance,
             ontology,
+            behavior_uri: String::new(),
+            behavior_sha256: String::new(),
             behavior_cases: BTreeMap::new(),
         }
+    }
+
+    pub fn with_behavior_source(mut self, source_uri: &str, sha256: &str) -> Self {
+        self.behavior_uri = source_uri.to_string();
+        self.behavior_sha256 = sha256.to_string();
+        self
     }
 
     pub fn with_behavior_cases(
@@ -419,13 +432,20 @@ impl ProvenanceEnvelope {
         })
     }
 
-    /// Replay one recorded case across two artifact snapshots. The case input
-    /// must be identical, and each classification must exist in its ontology.
+    /// Compare runner observations for one committed case across two artifact
+    /// snapshots. The case input must be identical, and each classification
+    /// must exist in its ontology.
     pub fn probe_behavior(
         &self,
         observed: &ProvenanceEnvelope,
         case_id: &str,
     ) -> Result<BehaviorProbe, ComparisonError> {
+        if self.behavior_sha256 != observed.behavior_sha256 {
+            return Err(ComparisonError::BehaviorCorpusMismatch {
+                baseline: self.behavior_sha256.clone(),
+                observed: observed.behavior_sha256.clone(),
+            });
+        }
         let baseline = self.behavior_cases.get(case_id).cloned();
         let observed_reading = observed.behavior_cases.get(case_id).cloned();
         let (Some(baseline), Some(observed_reading)) = (baseline, observed_reading) else {
@@ -500,6 +520,10 @@ pub enum ComparisonError {
     UnknownBehaviorCase {
         case_id: String,
     },
+    BehaviorCorpusMismatch {
+        baseline: String,
+        observed: String,
+    },
     BehaviorInputMismatch {
         case_id: String,
     },
@@ -530,6 +554,10 @@ impl fmt::Display for ComparisonError {
                     "behavior case {case_id:?} is not recorded in both snapshots"
                 )
             }
+            ComparisonError::BehaviorCorpusMismatch { baseline, observed } => write!(
+                f,
+                "behavior corpus mismatch: baseline {baseline:?}, observed {observed:?}"
+            ),
             ComparisonError::BehaviorInputMismatch { case_id } => write!(
                 f,
                 "behavior case {case_id:?} does not contain the same input on both sides"
@@ -832,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn behavior_probe_replays_the_same_case_and_exposes_a_route_change() {
+    fn behavior_probe_compares_the_same_case_and_exposes_a_route_change() {
         let baseline = envelope(
             "family-router",
             "model-v1",
@@ -846,7 +874,8 @@ mod tests {
                 classification: "nuclear".into(),
                 route: "manual-review".into(),
             },
-        )]);
+        )])
+        .with_behavior_source("urn:test:cases", &"3".repeat(64));
         let observed = envelope(
             "family-router",
             "candidate-v2",
@@ -860,7 +889,8 @@ mod tests {
                 classification: "nuclear".into(),
                 route: "family-support".into(),
             },
-        )]);
+        )])
+        .with_behavior_source("urn:test:cases", &"3".repeat(64));
 
         let probe = baseline
             .probe_behavior(&observed, "chosen-caregiver")

@@ -84,11 +84,12 @@ the question instead of crashing or guessing. See the
 cargo run --quiet -p strata-poc -- demo
 ```
 
-The standalone POC compares two ontology snapshots that each carry artifact
-and corpus provenance with externally verifiable SHA-256 commitments. It emits
-one JSON report with added, removed, and redefined concepts, then replays the
-same recorded case to expose a concrete classification and route change. Drift
-has a distinct exit status so a runner can route it to an accountable owner. See the
+The standalone POC compares two ontology snapshots that each carry artifact,
+corpus, and behavior-case provenance with enforced SHA-256 commitments. It
+emits one JSON report with added, removed, and redefined concepts, then executes
+the same committed case through both deterministic router artifacts to expose a
+concrete classification and route change. Drift has a distinct exit status so a
+runner can route it to an accountable owner. See the
 [`Strata provenance and drift quickstart`](examples/strata-poc/README.md).
 
 ## Lethe in five minutes: two real stores
@@ -115,5 +116,6 @@ purpose and the CLI implements only an explicit JSON Schema subset, core
 receipt hashes use FNV-1a (the store POC uses SHA-256), the Lethe store adapters
 shell into dedicated local containers rather than native client libraries,
 ontology definitions are compared structurally rather than with embeddings,
-and the repair passes are heuristic scanners, not a grammar. The seams where
-you'd extend them are marked in the doc comments.
+the Strata behavior artifact is a small deterministic policy rather than a
+model runtime, and the repair passes are heuristic scanners, not a grammar. The
+seams where you'd extend them are marked in the doc comments.

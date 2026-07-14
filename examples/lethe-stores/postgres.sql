@@ -16,6 +16,14 @@ CREATE INDEX IF NOT EXISTS lethe_memories_subject_idx
 CREATE INDEX IF NOT EXISTS lethe_memories_expires_at_idx
     ON lethe_memories (expires_at);
 
+-- Aggregate request IDs are bound here before any configured store may delete.
+-- Every coordinator process shares this ledger in the executable POC.
+CREATE TABLE IF NOT EXISTS lethe_erasure_intents (
+    request_id text PRIMARY KEY,
+    subject_digest text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE IF NOT EXISTS lethe_erasure_requests (
     store text NOT NULL,
     request_id text NOT NULL,

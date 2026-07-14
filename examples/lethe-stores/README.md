@@ -33,6 +33,7 @@ Erasing user:8842 from every configured store (demo-…)
 Cross-store erasure complete: yes
 Idempotent request replay: yes
 Conflicting subject protected: yes
+Concurrent aggregate conflict protected: yes
 Unrelated memory preserved: yes
 ```
 
@@ -84,6 +85,10 @@ python3 examples/lethe-stores/lethe_poc.py destroy
   store outcomes into one aggregate receipt.
 - Reusing a request ID returns the original store and aggregate receipts. Reusing
   it for another subject is rejected as an idempotency conflict.
+- Before either adapter is called, the coordinator atomically binds the aggregate
+  request ID to its subject in PostgreSQL's shared `lethe_erasure_intents`
+  ledger. Concurrent real-store POC processes therefore agree on one subject;
+  the generic contract uses a process-wide locked ledger by default.
 - Each store atomically reserves a new request ID for its subject before touching
   memory data. A concurrent caller that loses that reservation cannot delete a
   different subject before discovering the conflict.
@@ -102,12 +107,18 @@ rather than presented as proof. A production adapter should use native clients,
 atomic deletion-and-ledger transactions, cryptographic signing, and
 store-specific backup erasure policies.
 
+PostgreSQL is the POC's aggregate intent authority, so its availability gates
+all cross-store erasure before deletion begins. A production control plane
+would make that ledger durable and highly available rather than silently fall
+back to independent store claims.
+
 Successful request results are stored in PostgreSQL and Redis for replay. A
-process crash after reservation can leave a request visibly in progress, and a
-crash between deletion and result persistence can still lose the original
-receipt. Production adapters must make that state machine recoverable and the
-deletion-to-receipt transition atomic. Subject commitments are plain SHA-256 in
-the POC; production should use a keyed digest to resist guessing.
+process crash after the aggregate claim or a store reservation can leave a
+request visibly in progress, and a crash between deletion and result
+persistence can still lose the original receipt. Production adapters must make
+that state machine recoverable and the deletion-to-receipt transition atomic.
+Subject commitments are plain SHA-256 in the POC; production should use a keyed
+digest to resist guessing.
 
 The selection evidence and remaining interview questions are recorded in
 [`../../docs/store-selection.md`](../../docs/store-selection.md). The typed

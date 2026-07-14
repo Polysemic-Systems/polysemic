@@ -15,6 +15,7 @@ import math
 import subprocess
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -197,7 +198,10 @@ class PostgresStore:
         )
 
     def reset_poc_data(self) -> None:
-        self._psql("TRUNCATE TABLE lethe_memories, lethe_erasure_requests;")
+        self._psql(
+            "TRUNCATE TABLE lethe_memories, lethe_erasure_requests, "
+            "lethe_erasure_intents;"
+        )
 
     def remember(
         self,
@@ -419,6 +423,32 @@ class PostgresStore:
 
     def health(self) -> bool:
         return self._psql("SELECT 1;").strip() == "1"
+
+    def claim_request(self, request_id: str, subject_digest: str) -> None:
+        """Durably bind an aggregate request before either store can delete."""
+        output = self._psql(
+            """
+            INSERT INTO lethe_erasure_intents (request_id, subject_digest)
+            VALUES (
+                convert_from(decode(:'request_id_b64', 'base64'), 'UTF8'),
+                :'subject_digest'
+            )
+            ON CONFLICT (request_id) DO NOTHING;
+
+            SELECT subject_digest
+            FROM lethe_erasure_intents
+            WHERE request_id = convert_from(
+                decode(:'request_id_b64', 'base64'),
+                'UTF8'
+            );
+            """,
+            request_id_b64=_b64(request_id),
+            subject_digest=subject_digest,
+        ).strip()
+        if output != subject_digest:
+            raise IdempotencyConflict(
+                "aggregate request ID belongs to a different subject"
+            )
 
 
 REDIS_REMEMBER_LUA = """
@@ -687,7 +717,7 @@ def run_demo(compose: Compose) -> None:
     redis.remember("user:kept", "unrelated memory", policy, 2_592_000)
 
     request_id = f"demo-{uuid.uuid4()}"
-    coordinator = ErasureCoordinator([postgres, redis])
+    coordinator = ErasureCoordinator([postgres, redis], request_ledger=postgres)
     print(f"\nErasing user:8842 from every configured store ({request_id})", flush=True)
     report = coordinator.erase_subject(subject, request_id)
     for result in report.stores:
@@ -705,14 +735,54 @@ def run_demo(compose: Compose) -> None:
     complete = complete and redis.verify_subject_absent(subject)
     unrelated_survives = postgres.count_subject("user:kept") == 1
     unrelated_survives = unrelated_survives and redis.count_subject("user:kept") == 1
+
+    race_subjects = ("user:race-a", "user:race-b")
+    for race_subject in race_subjects:
+        postgres.remember(
+            race_subject, "race sentinel", policy, 2_592_000, [0.0, 0.0, 0.1]
+        )
+        redis.remember(race_subject, "race sentinel", policy, 2_592_000)
+    race_request = f"race-{uuid.uuid4()}"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        race_reports = tuple(
+            executor.map(
+                lambda race_subject: coordinator.erase_subject(
+                    race_subject, race_request
+                ),
+                race_subjects,
+            )
+        )
+    winners = [
+        race_subject
+        for race_subject, race_report in zip(race_subjects, race_reports)
+        if race_report.complete
+    ]
+    losers = [
+        race_subject
+        for race_subject, race_report in zip(race_subjects, race_reports)
+        if race_report.status is ReportStatus.FAILED
+    ]
+    concurrent_conflict_protected = len(winners) == 1 and len(losers) == 1
+    if concurrent_conflict_protected:
+        winner, loser = winners[0], losers[0]
+        concurrent_conflict_protected = postgres.count_subject(winner) == 0
+        concurrent_conflict_protected &= redis.count_subject(winner) == 0
+        concurrent_conflict_protected &= postgres.count_subject(loser) == 1
+        concurrent_conflict_protected &= redis.count_subject(loser) == 1
+
     print(f"\nCross-store erasure complete: {'yes' if complete else 'NO'}")
     print(f"Idempotent request replay: {'yes' if idempotent else 'NO'}")
     print(f"Conflicting subject protected: {'yes' if conflict_protected else 'NO'}")
+    print(
+        "Concurrent aggregate conflict protected: "
+        f"{'yes' if concurrent_conflict_protected else 'NO'}"
+    )
     print(f"Unrelated memory preserved: {'yes' if unrelated_survives else 'NO'}")
     if (
         not complete
         or not idempotent
         or not conflict_protected
+        or not concurrent_conflict_protected
         or not unrelated_survives
     ):
         raise StoreCommandError("the cross-store deletion invariant failed")

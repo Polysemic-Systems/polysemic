@@ -66,12 +66,16 @@ change the aggregate receipt.
 
 ## Idempotency
 
-PostgreSQL stores successful results in `lethe_erasure_requests`. Redis stores
-them under a hashed `lethe:erasure:*` key.
+PostgreSQL first binds the aggregate request ID in
+`lethe_erasure_intents`. PostgreSQL stores its successful adapter result in
+`lethe_erasure_requests`; Redis stores its result under a hashed
+`lethe:erasure:*` key.
 
-- Before deletion, each adapter atomically reserves the request ID for the
-  subject commitment. A concurrent request for another subject therefore loses
-  before it can touch that subject's data.
+- Before any adapter is called, every POC coordinator process atomically claims
+  the aggregate request ID in the shared PostgreSQL ledger. A concurrent request
+  for another subject therefore loses before any store can touch its data.
+- After that global claim, each adapter atomically reserves its own request ID
+  before deleting.
 - Replaying the same request ID for the same subject returns the original result.
 - Reusing it for another subject produces an `IdempotencyConflict` failure.
 - Every replay queries the store again. If new memory appeared after the original
@@ -80,9 +84,13 @@ them under a hashed `lethe:erasure:*` key.
 
 ## POC atomicity boundary
 
-Reservation, deletion, and result-ledger persistence are separate client
-operations in this POC. A process crash can leave a visible pending reservation
-or delete data without preserving the original receipt. Production adapters
-must make that state machine recoverable and commit deletion evidence
-atomically. Replicas, WAL/AOF, snapshots, exports, object storage, and backups
-remain separate erasure participants.
+Aggregate claim, store reservation, deletion, and result-ledger persistence are
+separate client operations in this POC. A process crash can leave a visible
+claim or pending reservation, or delete data without preserving the original
+receipt. Production adapters must make that state machine recoverable and
+commit deletion evidence atomically. Replicas, WAL/AOF, snapshots, exports,
+object storage, and backups remain separate erasure participants.
+
+The executable POC deliberately fails closed when its PostgreSQL aggregate
+ledger is unavailable; it will not continue into Redis with an unclaimed
+request. Production deployments need a highly available claim authority.
