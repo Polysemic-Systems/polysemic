@@ -158,7 +158,15 @@ impl<'a> Parser<'a> {
         }
         let s = std::str::from_utf8(&self.b[start..self.i]).unwrap();
         match s.parse::<f64>() {
-            Ok(number) if number.is_finite() => Ok(Value::Num(number)),
+            Ok(number)
+                if number.is_finite() && decimal_value(s) == decimal_value(&number.to_string()) =>
+            {
+                Ok(Value::Num(number))
+            }
+            Ok(number) if number.is_finite() => Err(ParseError {
+                at: start,
+                msg: format!("number `{s}` cannot be represented without changing its JSON value"),
+            }),
             _ => Err(ParseError {
                 at: start,
                 msg: format!("invalid or non-finite number `{s}`"),
@@ -310,6 +318,38 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Canonical decimal value used to prove that an `f64` round-trip has not
+/// changed the mathematical JSON number. The coefficient contains no leading
+/// or trailing zeroes; the exponent is the power of ten applied to it.
+fn decimal_value(input: &str) -> (bool, String, i64) {
+    let (negative, unsigned) = input
+        .strip_prefix('-')
+        .map_or((false, input), |rest| (true, rest));
+    let (mantissa, exponent) = unsigned
+        .split_once(['e', 'E'])
+        .map_or((unsigned, 0_i64), |(mantissa, exponent)| {
+            (mantissa, exponent.parse::<i64>().unwrap_or(i64::MAX))
+        });
+    let fractional_digits = mantissa
+        .split_once('.')
+        .map_or(0_i64, |(_, fraction)| fraction.len() as i64);
+    let mut digits = mantissa.replace('.', "");
+    let first_nonzero = digits.find(|character| character != '0');
+    let Some(first_nonzero) = first_nonzero else {
+        return (negative, "0".to_string(), 0);
+    };
+    digits.drain(..first_nonzero);
+    let trailing_zeroes = digits.len() - digits.trim_end_matches('0').len();
+    digits.truncate(digits.len() - trailing_zeroes);
+    (
+        negative,
+        digits,
+        exponent
+            .saturating_sub(fractional_digits)
+            .saturating_add(trailing_zeroes as i64),
+    )
+}
+
 /// Serialize a `Value` back to compact JSON.
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -317,7 +357,9 @@ impl fmt::Display for Value {
             Value::Null => write!(f, "null"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Num(n) => {
-                if n.fract() == 0.0 && n.is_finite() && n.abs() < 1e15 {
+                if *n == 0.0 && n.is_sign_negative() {
+                    write!(f, "-0")
+                } else if n.fract() == 0.0 && n.is_finite() && n.abs() < 1e15 {
                     write!(f, "{}", *n as i64)
                 } else {
                     write!(f, "{n}")
@@ -398,6 +440,29 @@ mod tests {
         for input in ["-", "01", "2.", "1e", "1e+", "1e999"] {
             assert!(parse(input).is_err(), "accepted invalid number {input:?}");
         }
+    }
+
+    #[test]
+    fn rejects_numbers_that_f64_would_silently_change() {
+        for input in [
+            "9007199254740993",
+            "1e-999",
+            "0.10000000000000001",
+            "100000000000000000001",
+        ] {
+            let error = parse(input).unwrap_err();
+            assert!(error.msg.contains("without changing"), "{error}");
+        }
+    }
+
+    #[test]
+    fn exact_numbers_and_negative_zero_round_trip() {
+        for input in ["0.1", "1.00e2", "9007199254740992", "-0"] {
+            let value = parse(input).unwrap();
+            let reparsed = parse(&value.to_string()).unwrap();
+            assert_eq!(reparsed, value, "failed to round-trip {input}");
+        }
+        assert_eq!(parse("-0").unwrap().to_string(), "-0");
     }
 
     #[test]

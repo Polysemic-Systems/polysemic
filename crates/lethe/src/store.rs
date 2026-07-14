@@ -5,6 +5,7 @@
 //! that refuses to call a multi-store request complete until every adapter has
 //! verified absence.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -213,8 +214,11 @@ impl StoreErasureReport {
 
 /// Fans one request out to every configured store and keeps failures local to
 /// their adapter. One unavailable store cannot suppress evidence from the rest.
+/// Request IDs are bound for this coordinator's lifetime; durable deployments
+/// must place the same claim in a ledger shared by all coordinator processes.
 pub struct ErasureCoordinator {
     adapters: Vec<Box<dyn ErasureAdapter>>,
+    request_claims: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,11 +243,34 @@ impl ErasureCoordinator {
             }
             names.push(name.to_string());
         }
-        Ok(Self { adapters })
+        Ok(Self {
+            adapters,
+            request_claims: BTreeMap::new(),
+        })
     }
 
     pub fn erase_subject(&mut self, request: &ErasureRequest) -> StoreErasureReport {
         let expected_subject = request.subject_digest();
+        if let Some(claimed_subject) = self.request_claims.get(&request.request_id) {
+            if claimed_subject != &expected_subject {
+                let results = self
+                    .adapters
+                    .iter()
+                    .map(|adapter| {
+                        failed_result(
+                            adapter.name(),
+                            request,
+                            &expected_subject,
+                            "idempotency_conflict",
+                        )
+                    })
+                    .collect();
+                return build_report(request, expected_subject, results);
+            }
+        } else {
+            self.request_claims
+                .insert(request.request_id.clone(), expected_subject.clone());
+        }
         let mut results = Vec::with_capacity(self.adapters.len());
         for adapter in &mut self.adapters {
             let store = adapter.name().to_string();
@@ -565,5 +592,21 @@ mod tests {
 
         assert_eq!(report.status, ErasureReportStatus::Failed);
         assert_eq!(report.stores[0].error.as_deref(), Some("store_mismatch"));
+    }
+
+    #[test]
+    fn aggregate_request_id_is_bound_before_adapters_are_called_again() {
+        let mut coordinator =
+            ErasureCoordinator::new(vec![Box::new(StubAdapter::complete("postgres"))]).unwrap();
+        assert!(coordinator.erase_subject(&request()).complete());
+
+        let conflict = ErasureRequest::new("request-1", "user:other").unwrap();
+        let report = coordinator.erase_subject(&conflict);
+
+        assert_eq!(report.status, ErasureReportStatus::Failed);
+        assert_eq!(
+            report.stores[0].error.as_deref(),
+            Some("idempotency_conflict")
+        );
     }
 }

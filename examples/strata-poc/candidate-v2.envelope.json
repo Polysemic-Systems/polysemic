@@ -2,8 +2,8 @@
   "artifact": {
     "id": "family-support-router",
     "version": "candidate-v2",
-    "source_uri": "examples/strata-poc/candidate-v2.artifact.txt",
-    "sha256": "0ad6b0a29456adb13f2aa5c5b5752aaa0717fe553a80e29d0661e83dd1db9cf9"
+    "source_uri": "examples/strata-poc/candidate-v2.artifact.json",
+    "sha256": "229f9c92872dcd0adef98e938ea25516538ee1e5fd41fe1dec81478579ac96a3"
   },
   "provenance": {
     "corpus": "support-policy-workshop-2026",
@@ -32,12 +32,7 @@
     }
   },
   "behavior": {
-    "cases": {
-      "chosen-caregiver": {
-        "input": "Alex names a non-relative chosen-family caregiver for household support.",
-        "classification": "chosen",
-        "route": "family-support"
-      }
-    }
+    "source_uri": "examples/strata-poc/behavior-cases.json",
+    "sha256": "c15597a41218c882e837b844c2f86025c794786848d3ec34c77656a0885b4d77"
   }
 }

@@ -1,5 +1,0 @@
-artifact_id=family-support-router
-artifact_version=model-v1
-behavior_case=chosen-caregiver
-classification=other
-route=manual-review

@@ -115,6 +115,25 @@ class ReceiptTests(unittest.TestCase):
         )
         self.assertEqual(store.erase_subject("user:1", "request-1"), receipt)
 
+    def test_postgres_aggregate_claim_precedes_store_deletion(self):
+        digest = lethe_poc.subject_commitment("user:1")
+        compose = FakeCompose([f"{digest}\n"])
+        store = lethe_poc.PostgresStore(compose)
+
+        store.claim_request("request-1", digest)
+
+        self.assertEqual(len(compose.calls), 1)
+        self.assertIn("lethe_erasure_intents", compose.calls[0][2])
+        self.assertNotIn("DELETE FROM lethe_memories", compose.calls[0][2])
+
+    def test_postgres_aggregate_claim_rejects_another_subject(self):
+        other_digest = lethe_poc.subject_commitment("user:other")
+        compose = FakeCompose([f"{other_digest}\n"])
+        store = lethe_poc.PostgresStore(compose)
+
+        with self.assertRaises(lethe_poc.IdempotencyConflict):
+            store.claim_request("request-1", lethe_poc.subject_commitment("user:1"))
+
     def test_postgres_conflict_is_rejected_before_delete(self):
         other_digest = lethe_poc.subject_commitment("user:other")
         compose = FakeCompose([f"{other_digest}||another-owner\n"])

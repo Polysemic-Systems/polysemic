@@ -1255,6 +1255,12 @@ pub struct Reconciliation {
 /// disagreeing readings as candidates. The model's variance is treated as
 /// polysemy, not noise.
 pub fn reconcile(samples: &[&str], schema: &Schema) -> Result<Reconciliation, ParseError> {
+    if samples.is_empty() {
+        return Err(ParseError {
+            at: 0,
+            msg: "reconciliation requires at least one sample".into(),
+        });
+    }
     let mut digestions = Vec::new();
     for s in samples {
         digestions.push(digest(s, schema)?);
@@ -1266,12 +1272,7 @@ pub fn reconcile(samples: &[&str], schema: &Schema) -> Result<Reconciliation, Pa
     for digestion in &digestions {
         if let Outcome::Clarify(questions) = &digestion.outcome {
             for question in questions {
-                if !unresolved
-                    .iter()
-                    .any(|existing| existing.path == question.path)
-                {
-                    unresolved.push(question.clone());
-                }
+                merge_question(&mut unresolved, question);
             }
         }
     }
@@ -1289,23 +1290,6 @@ pub fn reconcile(samples: &[&str], schema: &Schema) -> Result<Reconciliation, Pa
             _ => None,
         })
         .collect();
-
-    if resolved.is_empty() {
-        let mut qs: Vec<Question> = Vec::new();
-        for d in &digestions {
-            if let Outcome::Clarify(questions) = &d.outcome {
-                for q in questions {
-                    if !qs.iter().any(|e| e.path == q.path) {
-                        qs.push(q.clone());
-                    }
-                }
-            }
-        }
-        return Ok(Reconciliation {
-            outcome: Outcome::Clarify(qs),
-            per_sample: digestions,
-        });
-    }
 
     // unanimous?
     if resolved.windows(2).all(|w| w[0] == w[1]) {
@@ -1326,6 +1310,21 @@ pub fn reconcile(samples: &[&str], schema: &Schema) -> Result<Reconciliation, Pa
         outcome,
         per_sample: digestions,
     })
+}
+
+fn merge_question(questions: &mut Vec<Question>, incoming: &Question) {
+    if let Some(existing) = questions
+        .iter_mut()
+        .find(|existing| existing.path == incoming.path)
+    {
+        for candidate in &incoming.candidates {
+            if !existing.candidates.contains(candidate) {
+                existing.candidates.push(candidate.clone());
+            }
+        }
+    } else {
+        questions.push(incoming.clone());
+    }
 }
 
 fn majority(resolved: &[&Value]) -> Outcome {
@@ -1625,5 +1624,28 @@ mod tests {
             }
             other => panic!("expected clarification, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reconcile_merges_candidates_for_the_same_path() {
+        let first = r#"{"item":"espresso","qty":"2 or 3"}"#;
+        let second = r#"{"item":"espresso","qty":"4 or 5"}"#;
+
+        let reconciliation = reconcile(&[first, second], &order_schema()).unwrap();
+
+        match reconciliation.outcome {
+            Outcome::Clarify(questions) => {
+                assert_eq!(questions.len(), 1);
+                assert_eq!(questions[0].path, "$.qty");
+                assert_eq!(questions[0].candidates, ["2", "3", "4", "5"]);
+            }
+            other => panic!("expected clarification, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reconcile_rejects_an_empty_sample_set() {
+        let error = reconcile(&[], &order_schema()).unwrap_err();
+        assert!(error.msg.contains("at least one sample"));
     }
 }

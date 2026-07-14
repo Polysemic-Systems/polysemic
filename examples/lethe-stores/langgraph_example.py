@@ -23,7 +23,7 @@ class LifecycleState(TypedDict, total=False):
 
 
 def build_graph(postgres: PostgresStore, redis: RedisStore):
-    coordinator = ErasureCoordinator([postgres, redis])
+    coordinator = ErasureCoordinator([postgres, redis], request_ledger=postgres)
 
     def remember(state: LifecycleState) -> dict[str, int]:
         subject = state["subject"]

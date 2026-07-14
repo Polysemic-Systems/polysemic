@@ -101,7 +101,7 @@ memory.<span class="fn">remember_with_policy</span>(
           <li>PostgreSQL uses DELETE … RETURNING beside pgvector embeddings</li>
           <li>Redis erases indexed keys and verifies logical absence</li>
           <li>Idempotent replay returns the original receipts</li>
-          <li>Request IDs are reserved before deletion, so conflicts lose safely</li>
+          <li>A shared aggregate ledger binds request IDs before either store is called</li>
           <li>Unrelated memories must survive the proof</li>
         </ul>
       </div>

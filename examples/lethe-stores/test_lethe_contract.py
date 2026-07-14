@@ -1,4 +1,5 @@
 import unittest
+from threading import Event, Thread
 
 from lethe_contract import (
     DeletedRecord,
@@ -103,6 +104,47 @@ class ContractTests(unittest.TestCase):
                     StubAdapter("same", completed("same")),
                 ]
             )
+
+    def test_concurrent_conflicting_subject_is_rejected_before_store_access(self):
+        entered = Event()
+        release = Event()
+        calls = []
+
+        class BlockingAdapter:
+            name = "postgres"
+
+            def erase_subject(self, subject, request_id):
+                calls.append(subject)
+                entered.set()
+                if not release.wait(timeout=2):
+                    raise TimeoutError("test did not release adapter")
+                return completed(self.name, request_id, subject)
+
+            def verify_subject_absent(self, _subject):
+                return True
+
+            def health(self):
+                return True
+
+        coordinator = ErasureCoordinator([BlockingAdapter()])
+        first = []
+        thread = Thread(
+            target=lambda: first.append(
+                coordinator.erase_subject("user:first", "request-shared")
+            )
+        )
+        thread.start()
+        self.assertTrue(entered.wait(timeout=2))
+
+        conflict = coordinator.erase_subject("user:second", "request-shared")
+        release.set()
+        thread.join(timeout=2)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(calls, ["user:first"])
+        self.assertEqual(conflict.status, ReportStatus.FAILED)
+        self.assertEqual(conflict.stores[0].error, "IdempotencyConflict")
+        self.assertEqual(first[0].status, ReportStatus.COMPLETE)
 
 
 if __name__ == "__main__":

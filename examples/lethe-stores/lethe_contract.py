@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Protocol, Sequence, runtime_checkable
@@ -184,19 +185,58 @@ class ErasureAdapter(Protocol):
     def health(self) -> bool: ...
 
 
+@runtime_checkable
+class ErasureRequestLedger(Protocol):
+    """Atomically bind an aggregate request ID before any store is touched."""
+
+    def claim_request(self, request_id: str, subject_digest: str) -> None: ...
+
+
+class InMemoryRequestLedger:
+    """Thread-safe POC ledger for one coordinator process."""
+
+    def __init__(self) -> None:
+        self._claims: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def claim_request(self, request_id: str, subject_digest: str) -> None:
+        with self._lock:
+            existing = self._claims.setdefault(request_id, subject_digest)
+            if existing != subject_digest:
+                raise IdempotencyConflict(
+                    "aggregate request ID belongs to a different subject"
+                )
+
+
+_PROCESS_REQUEST_LEDGER = InMemoryRequestLedger()
+
+
 class ErasureCoordinator:
-    def __init__(self, adapters: Sequence[ErasureAdapter]):
+    def __init__(
+        self,
+        adapters: Sequence[ErasureAdapter],
+        request_ledger: ErasureRequestLedger | None = None,
+    ):
         if not adapters:
             raise ValueError("at least one erasure adapter is required")
         names = [adapter.name for adapter in adapters]
         if len(names) != len(set(names)):
             raise ValueError("erasure adapter names must be unique")
         self.adapters = tuple(adapters)
+        self.request_ledger = request_ledger or _PROCESS_REQUEST_LEDGER
 
     def erase_subject(self, subject: str, request_id: str) -> ErasureReport:
         if not request_id.strip():
             raise ValueError("request_id must not be empty")
         subject_digest = subject_commitment(subject)
+        try:
+            self.request_ledger.claim_request(request_id, subject_digest)
+        except Exception as error:
+            results = [
+                _failure_result(adapter.name, request_id, subject_digest, error)
+                for adapter in self.adapters
+            ]
+            return self._report(request_id, subject_digest, results)
         results = []
         for adapter in self.adapters:
             try:

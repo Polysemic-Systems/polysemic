@@ -1,6 +1,8 @@
 //! A product-shaped Strata proof: two provenance-carrying ontology snapshots
 //! in, and one machine-readable semantic-drift report out.
 
+mod sha256;
+
 use polysemic_core::{parse, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -11,6 +13,8 @@ use strata::{
     BehaviorProbe, BehaviorReading, ComparisonError, EnvelopeComparison, Labor, OntologySnapshot,
     ProvenanceEnvelope, ProvenanceLabel,
 };
+
+use sha256::hex_digest;
 
 const DEMO_BASELINE: &str = include_str!("../../../examples/strata-poc/model-v1.envelope.json");
 const DEMO_OBSERVED: &str = include_str!("../../../examples/strata-poc/candidate-v2.envelope.json");
@@ -168,7 +172,7 @@ fn read_envelope(path: &PathBuf, stage: &str) -> Result<String, Value> {
 }
 
 fn analyze(baseline_raw: &str, observed_raw: &str, probe: &str, case_id: &str) -> (Value, i32) {
-    let baseline = match parse_envelope(baseline_raw) {
+    let mut baseline = match parse_envelope(baseline_raw) {
         Ok(envelope) => envelope,
         Err(error) => {
             return (
@@ -182,7 +186,7 @@ fn analyze(baseline_raw: &str, observed_raw: &str, probe: &str, case_id: &str) -
             );
         }
     };
-    let observed = match parse_envelope(observed_raw) {
+    let mut observed = match parse_envelope(observed_raw) {
         Ok(envelope) => envelope,
         Err(error) => {
             return (
@@ -218,6 +222,37 @@ fn analyze(baseline_raw: &str, observed_raw: &str, probe: &str, case_id: &str) -
             1,
         );
     }
+
+    let baseline_router = match verify_envelope(&mut baseline, "baseline") {
+        Ok(router) => router,
+        Err(error) => {
+            return (
+                rejection(
+                    "baseline",
+                    "verification_failed",
+                    &error.message,
+                    Some(&error.path),
+                ),
+                1,
+            );
+        }
+    };
+    let observed_router = match verify_envelope(&mut observed, "observed") {
+        Ok(router) => router,
+        Err(error) => {
+            return (
+                rejection(
+                    "observed",
+                    "verification_failed",
+                    &error.message,
+                    Some(&error.path),
+                ),
+                1,
+            );
+        }
+    };
+    materialize_behavior(&mut baseline, &baseline_router, case_id);
+    materialize_behavior(&mut observed, &observed_router, case_id);
 
     match baseline.compare(&observed, probe) {
         Ok(comparison) => {
@@ -281,6 +316,169 @@ impl fmt::Display for InputError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BehaviorDecision {
+    classification: String,
+    route: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RouterRule {
+    contains: String,
+    decision: BehaviorDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RouterArtifact {
+    artifact_id: String,
+    artifact_version: String,
+    rules: Vec<RouterRule>,
+    default: BehaviorDecision,
+}
+
+impl RouterArtifact {
+    fn evaluate(&self, input: &str) -> BehaviorDecision {
+        self.rules
+            .iter()
+            .find(|rule| input.contains(&rule.contains))
+            .map_or_else(|| self.default.clone(), |rule| rule.decision.clone())
+    }
+}
+
+fn verify_envelope(
+    envelope: &mut ProvenanceEnvelope,
+    stage: &str,
+) -> Result<RouterArtifact, InputError> {
+    let artifact = read_committed(
+        &envelope.artifact_uri,
+        &envelope.artifact_sha256,
+        &format!("$.{stage}.artifact"),
+    )?;
+    read_committed(
+        &envelope.provenance.source_uri,
+        &envelope.provenance.corpus_sha256,
+        &format!("$.{stage}.provenance"),
+    )?;
+    let behavior = read_committed(
+        &envelope.behavior_uri,
+        &envelope.behavior_sha256,
+        &format!("$.{stage}.behavior"),
+    )?;
+
+    let router = parse_router(&artifact)?;
+    if router.artifact_id != envelope.artifact_id
+        || router.artifact_version != envelope.artifact_version
+    {
+        return Err(InputError::new(
+            format!("$.{stage}.artifact"),
+            "artifact bytes do not identify the envelope's artifact ID and version",
+        ));
+    }
+    envelope.behavior_cases = parse_behavior_cases(&behavior)?.into_iter().collect();
+    Ok(router)
+}
+
+fn read_committed(source_uri: &str, expected: &str, path: &str) -> Result<String, InputError> {
+    let source_path = PathBuf::from(source_uri);
+    let source_path = if source_path.is_absolute() {
+        source_path
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(source_path)
+    };
+    let bytes = fs::read(&source_path).map_err(|error| {
+        InputError::new(
+            format!("{path}.source_uri"),
+            format!("cannot read committed source {source_uri:?}: {error}"),
+        )
+    })?;
+    let observed = hex_digest(&bytes);
+    if observed != expected {
+        return Err(InputError::new(
+            format!("{path}.sha256"),
+            format!("commitment mismatch: observed {observed}, expected {expected}"),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        InputError::new(
+            format!("{path}.source_uri"),
+            "committed source must be UTF-8",
+        )
+    })
+}
+
+fn parse_router(raw: &str) -> Result<RouterArtifact, InputError> {
+    let value = parse(raw).map_err(|error| {
+        InputError::new(
+            format!("byte {}", error.at),
+            format!("invalid router JSON: {}", error.msg),
+        )
+    })?;
+    let object = expect_object(&value, "$.artifact_source")?;
+    reject_unknown_fields(
+        object,
+        &[
+            "format",
+            "artifact_id",
+            "artifact_version",
+            "rules",
+            "default",
+        ],
+        "$.artifact_source",
+    )?;
+    let format = required_string(object, "format", "$.artifact_source")?;
+    if format != "strata-router/v1" {
+        return Err(InputError::new(
+            "$.artifact_source.format",
+            "expected `strata-router/v1`",
+        ));
+    }
+    let rules_value = required(object, "rules", "$.artifact_source")?;
+    let rules_array = expect_array(rules_value, "$.artifact_source.rules")?;
+    let mut rules = Vec::with_capacity(rules_array.len());
+    for (index, value) in rules_array.iter().enumerate() {
+        let path = format!("$.artifact_source.rules[{index}]");
+        let rule = expect_object(value, &path)?;
+        reject_unknown_fields(rule, &["contains", "classification", "route"], &path)?;
+        rules.push(RouterRule {
+            contains: required_string(rule, "contains", &path)?,
+            decision: parse_decision(rule, &path)?,
+        });
+    }
+    let default_path = "$.artifact_source.default";
+    let default = expect_object(
+        required(object, "default", "$.artifact_source")?,
+        default_path,
+    )?;
+    reject_unknown_fields(default, &["classification", "route"], default_path)?;
+
+    Ok(RouterArtifact {
+        artifact_id: required_string(object, "artifact_id", "$.artifact_source")?,
+        artifact_version: required_string(object, "artifact_version", "$.artifact_source")?,
+        rules,
+        default: parse_decision(default, default_path)?,
+    })
+}
+
+fn parse_decision(
+    object: &BTreeMap<String, Value>,
+    path: &str,
+) -> Result<BehaviorDecision, InputError> {
+    Ok(BehaviorDecision {
+        classification: required_string(object, "classification", path)?,
+        route: required_string(object, "route", path)?,
+    })
+}
+
+fn materialize_behavior(envelope: &mut ProvenanceEnvelope, router: &RouterArtifact, case_id: &str) {
+    if let Some(reading) = envelope.behavior_cases.get_mut(case_id) {
+        let decision = router.evaluate(&reading.input);
+        reading.classification = decision.classification;
+        reading.route = decision.route;
+    }
+}
+
 fn parse_envelope(raw: &str) -> Result<ProvenanceEnvelope, InputError> {
     let value = parse(raw).map_err(|error| {
         InputError::new(
@@ -314,7 +512,7 @@ fn parse_envelope(raw: &str) -> Result<ProvenanceEnvelope, InputError> {
     let ontology = parse_ontology(ontology_value)?;
 
     let behavior_value = required(root, "behavior", "$")?;
-    let behavior_cases = parse_behavior(behavior_value)?;
+    let (behavior_uri, behavior_sha256) = parse_behavior_source(behavior_value)?;
 
     Ok(ProvenanceEnvelope::new(
         &artifact_id,
@@ -324,7 +522,7 @@ fn parse_envelope(raw: &str) -> Result<ProvenanceEnvelope, InputError> {
         provenance,
         ontology,
     )
-    .with_behavior_cases(behavior_cases))
+    .with_behavior_source(&behavior_uri, &behavior_sha256))
 }
 
 fn parse_provenance(value: &Value) -> Result<ProvenanceLabel, InputError> {
@@ -450,13 +648,38 @@ fn parse_ontology(value: &Value) -> Result<OntologySnapshot, InputError> {
     Ok(OntologySnapshot::new(&name, &version, concepts))
 }
 
-fn parse_behavior(value: &Value) -> Result<Vec<(String, BehaviorReading)>, InputError> {
+fn parse_behavior_source(value: &Value) -> Result<(String, String), InputError> {
     let object = expect_object(value, "$.behavior")?;
-    reject_unknown_fields(object, &["cases"], "$.behavior")?;
-    let cases = expect_object(required(object, "cases", "$.behavior")?, "$.behavior.cases")?;
+    reject_unknown_fields(object, &["source_uri", "sha256"], "$.behavior")?;
+    Ok((
+        required_string(object, "source_uri", "$.behavior")?,
+        required_sha256(object, "sha256", "$.behavior")?,
+    ))
+}
+
+fn parse_behavior_cases(raw: &str) -> Result<Vec<(String, BehaviorReading)>, InputError> {
+    let value = parse(raw).map_err(|error| {
+        InputError::new(
+            format!("byte {}", error.at),
+            format!("invalid behavior-case JSON: {}", error.msg),
+        )
+    })?;
+    let object = expect_object(&value, "$.behavior_source")?;
+    reject_unknown_fields(object, &["format", "cases"], "$.behavior_source")?;
+    let format = required_string(object, "format", "$.behavior_source")?;
+    if format != "strata-cases/v1" {
+        return Err(InputError::new(
+            "$.behavior_source.format",
+            "expected `strata-cases/v1`",
+        ));
+    }
+    let cases = expect_object(
+        required(object, "cases", "$.behavior_source")?,
+        "$.behavior_source.cases",
+    )?;
     if cases.is_empty() {
         return Err(InputError::new(
-            "$.behavior.cases",
+            "$.behavior_source.cases",
             "at least one behavior case is required",
         ));
     }
@@ -464,19 +687,19 @@ fn parse_behavior(value: &Value) -> Result<Vec<(String, BehaviorReading)>, Input
     for (case_id, value) in cases {
         if case_id.trim().is_empty() {
             return Err(InputError::new(
-                "$.behavior.cases",
+                "$.behavior_source.cases",
                 "behavior case IDs must not be empty",
             ));
         }
-        let path = format!("$.behavior.cases.{case_id}");
+        let path = format!("$.behavior_source.cases.{case_id}");
         let reading = expect_object(value, &path)?;
-        reject_unknown_fields(reading, &["input", "classification", "route"], &path)?;
+        reject_unknown_fields(reading, &["input"], &path)?;
         parsed.push((
             case_id.clone(),
             BehaviorReading {
                 input: required_string(reading, "input", &path)?,
-                classification: required_string(reading, "classification", &path)?,
-                route: required_string(reading, "route", &path)?,
+                classification: String::new(),
+                route: String::new(),
             },
         ));
     }
@@ -693,6 +916,16 @@ fn report_value(
                 .into(),
             ),
         ),
+        (
+            "verification".into(),
+            Value::Obj(BTreeMap::from([
+                (
+                    "behavior_engine".into(),
+                    Value::Str("strata-router/v1".into()),
+                ),
+                ("commitments_verified".into(), Value::Bool(true)),
+            ])),
+        ),
     ]))
 }
 
@@ -718,18 +951,34 @@ fn envelope_value(envelope: &ProvenanceEnvelope) -> Value {
         ),
         (
             "behavior".into(),
-            Value::Obj(BTreeMap::from([(
-                "cases".into(),
-                Value::Obj(
-                    envelope
-                        .behavior_cases
-                        .iter()
-                        .map(|(case_id, reading)| {
-                            (case_id.clone(), behavior_reading_value(reading))
-                        })
-                        .collect(),
+            Value::Obj(BTreeMap::from([
+                (
+                    "cases".into(),
+                    Value::Obj(
+                        envelope
+                            .behavior_cases
+                            .iter()
+                            .map(|(case_id, reading)| {
+                                (
+                                    case_id.clone(),
+                                    Value::Obj(BTreeMap::from([(
+                                        "input".into(),
+                                        Value::Str(reading.input.clone()),
+                                    )])),
+                                )
+                            })
+                            .collect(),
+                    ),
                 ),
-            )])),
+                (
+                    "sha256".into(),
+                    Value::Str(envelope.behavior_sha256.clone()),
+                ),
+                (
+                    "source_uri".into(),
+                    Value::Str(envelope.behavior_uri.clone()),
+                ),
+            ])),
         ),
         ("ontology".into(), ontology_value(&envelope.ontology)),
         ("provenance".into(), provenance_value(&envelope.provenance)),
@@ -868,7 +1117,7 @@ fn run_demo() -> i32 {
     println!("Strata POC — the sediment carries its history\n");
     let (report, code) = analyze(DEMO_BASELINE, DEMO_OBSERVED, "nuclear", "chosen-caregiver");
     println!(
-        "1. Compare two provenance envelopes, probe `nuclear`, and replay `chosen-caregiver`\n{report}\n"
+        "1. Verify two provenance envelopes, probe `nuclear`, and execute `chosen-caregiver`\n{report}\n"
     );
     if code == 2
         && status(&report) == Some("drift_detected")
@@ -968,7 +1217,9 @@ mod tests {
         let (report, code) = analyze(DEMO_BASELINE, &unrelated, "nuclear", "chosen-caregiver");
         assert_eq!(code, 1);
         assert_eq!(status(&report), Some("rejected"));
-        assert!(report.to_string().contains("artifact mismatch"));
+        assert!(report
+            .to_string()
+            .contains("artifact bytes do not identify"));
     }
 
     #[test]
@@ -998,5 +1249,38 @@ mod tests {
         assert_eq!(code, 1);
         assert_eq!(status(&report), Some("rejected"));
         assert!(report.to_string().contains("invalid_behavior_probe"));
+    }
+
+    #[test]
+    fn a_declared_hash_that_does_not_match_bytes_is_rejected() {
+        let tampered = DEMO_BASELINE.replace(
+            "c46701df82ea273c52dfbaabb32a6d0ebed76a7b1bb283a28270529da7e0f208",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        );
+
+        let (report, code) = analyze(&tampered, DEMO_OBSERVED, "nuclear", "chosen-caregiver");
+
+        assert_eq!(code, 1);
+        assert_eq!(status(&report), Some("rejected"));
+        assert!(report.to_string().contains("commitment mismatch"));
+    }
+
+    #[test]
+    fn router_executes_rules_and_default_instead_of_accepting_recorded_outputs() {
+        let router = parse_router(include_str!(
+            "../../../examples/strata-poc/candidate-v2.artifact.json"
+        ))
+        .unwrap();
+
+        assert_eq!(
+            router
+                .evaluate("Alex names a chosen-family caregiver")
+                .classification,
+            "chosen"
+        );
+        assert_eq!(
+            router.evaluate("Alex names an aunt as caregiver").route,
+            "manual-review"
+        );
     }
 }

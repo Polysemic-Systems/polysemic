@@ -1,0 +1,16 @@
+{
+  "format": "strata-router/v1",
+  "artifact_id": "family-support-router",
+  "artifact_version": "candidate-v2",
+  "rules": [
+    {
+      "contains": "chosen-family caregiver",
+      "classification": "chosen",
+      "route": "family-support"
+    }
+  ],
+  "default": {
+    "classification": "other",
+    "route": "manual-review"
+  }
+}
