@@ -2,7 +2,14 @@
 
 The contract coordinates deletion across stores without treating one successful
 `DELETE` as proof that the whole system forgot. Its implementation lives in
+the Rust open core at [`crates/lethe/src/store.rs`](../crates/lethe/src/store.rs).
+The executable PostgreSQL, Redis, and LangGraph POCs mirror it in
 [`examples/lethe-stores/lethe_contract.py`](../examples/lethe-stores/lethe_contract.py).
+
+The two implementations deliberately share the state machine and field
+contracts rather than the receipt hash algorithm. The dependency-free Rust core
+uses its existing FNV-1a POC commitment; the Python store proof uses SHA-256.
+Production deployments should replace both with a versioned, keyed digest.
 
 ## Request
 
@@ -24,6 +31,11 @@ Each `ErasureAdapter` exposes:
 | `health()` | Confirm that the adapter can reach its authoritative store. |
 | `erase_subject(subject, request_id)` | Delete or replay a previously completed request and return a store result. |
 | `verify_subject_absent(subject)` | Query the store after deletion; never infer absence from a delete count. |
+
+Rust adapters also declare `StoreCapabilities`: native TTL support, vector-value
+support, and whether scheduled sweeps can produce audit evidence. Policy can
+therefore reject a store whose deletion behavior is weaker than the requested
+retention contract.
 
 An adapter has one unique `name`. Results returned under another store name,
 request ID, or subject commitment are rejected.

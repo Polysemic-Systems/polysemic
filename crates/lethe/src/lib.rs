@@ -12,12 +12,16 @@
 //! - [`Lethe::forget`] is erasure on demand, and it returns a receipt:
 //!   deletion you can point to. Right-to-be-forgotten as an API call,
 //!   not a fire drill.
+//! - [`store::ErasureCoordinator`] defines the durable-store boundary and
+//!   refuses completion until every adapter independently verifies absence.
 //!
 //! Time is injected (`now: Instant`) everywhere, so the whole lifecycle is
 //! testable without sleeping.
 
 use std::fmt;
 use std::time::{Duration, Instant};
+
+pub mod store;
 
 /// A named retention decision. The hosted control plane can distribute and
 /// version these policies; the open core only needs the name and TTL contract.
