@@ -74,6 +74,9 @@ jobs:
       - name: Run LangGraph memory-lifecycle proof
         run: python3 examples/lethe-stores/langgraph_example.py
 
+      - name: Run Digest ambiguity-routing proof
+        run: cargo run --quiet -p digest-poc -- demo
+
       - name: Remove store containers and volumes
         if: always()
         run: python3 examples/lethe-stores/lethe_poc.py destroy

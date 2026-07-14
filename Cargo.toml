@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/polysemic-core",
     "crates/digest",
+    "crates/digest-poc",
     "crates/strata",
     "crates/lethe",
     "crates/seam-demo",

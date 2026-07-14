@@ -45,6 +45,7 @@ The diagnosis is evidence-led, not branding-led: a system can suffer more than o
 ```sh
 cargo test              # all crates
 cargo run -p seam-demo  # the hero terminal, live
+cargo run -p digest-poc -- demo  # Digest as a standalone seam
 ```
 
 The demo pushes one realistic mess through all three organs:
@@ -58,6 +59,19 @@ repairs — then *asks* about the quantity instead of guessing and applies the
 answer through a separate ledger. Strata prints provenance, flags distribution
 drift, and diffs ontology versions. Lethe remembers under a named policy,
 prunes on schedule, and produces sweep and erasure receipts.
+
+## Digest in five minutes: a machine-usable seam
+
+```sh
+cargo run --quiet -p digest-poc -- demo
+```
+
+The standalone POC accepts a strict JSON Schema subset and arbitrary model
+text. It emits one JSON envelope with `resolved`, `clarify`, or `rejected`
+status; stable repair codes; structured questions; and a separate answer
+ledger. Clarification has a distinct exit status, so an agent runner can route
+the question instead of crashing or guessing. See the
+[`Digest seam quickstart`](examples/digest-poc/README.md).
 
 ## Lethe in five minutes: two real stores
 
@@ -79,8 +93,9 @@ optional no-LLM LangGraph lifecycle. See the
 ## Honest limitations
 
 This is a working skeleton, not a product: the schema language is small on
-purpose, core receipt hashes use FNV-1a (the store POC uses SHA-256), the Lethe
-store adapters shell into dedicated local containers rather than native client
-libraries, ontology definitions are compared structurally rather than with
-embeddings, and the repair passes are heuristic scanners, not a grammar. The
-seams where you'd extend them are marked in the doc comments.
+purpose and the CLI implements only an explicit JSON Schema subset, core
+receipt hashes use FNV-1a (the store POC uses SHA-256), the Lethe store adapters
+shell into dedicated local containers rather than native client libraries,
+ontology definitions are compared structurally rather than with embeddings,
+and the repair passes are heuristic scanners, not a grammar. The seams where
+you'd extend them are marked in the doc comments.
