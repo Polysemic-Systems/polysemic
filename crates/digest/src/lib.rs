@@ -81,6 +81,56 @@ pub struct Question {
     pub candidates: Vec<String>,
 }
 
+/// A human or policy-layer answer to one explicit [`Question`]. Answers are
+/// keyed by the same JSON path carried by the question, so the handoff can be
+/// transported without rewriting the model's original output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Answer {
+    pub path: String,
+    pub value: Value,
+}
+
+impl Answer {
+    pub fn new(path: &str, value: Value) -> Self {
+        Self {
+            path: path.to_string(),
+            value,
+        }
+    }
+}
+
+/// A failed attempt to apply a clarification answer. Digest refuses answers
+/// to paths it did not ask about: human-in-the-loop must not become a silent
+/// mutation backdoor.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnswerError {
+    Parse(ParseError),
+    NotRequested { path: String },
+    Duplicate { path: String },
+    InvalidPath { path: String },
+}
+
+impl fmt::Display for AnswerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AnswerError::Parse(error) => write!(f, "{error}"),
+            AnswerError::NotRequested { path } => {
+                write!(f, "no clarification was requested at {path}")
+            }
+            AnswerError::Duplicate { path } => write!(f, "duplicate answer for {path}"),
+            AnswerError::InvalidPath { path } => write!(f, "invalid answer path {path}"),
+        }
+    }
+}
+
+impl std::error::Error for AnswerError {}
+
+impl From<ParseError> for AnswerError {
+    fn from(value: ParseError) -> Self {
+        AnswerError::Parse(value)
+    }
+}
+
 impl fmt::Display for Question {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} — {}", self.path, self.prompt)?;
@@ -104,6 +154,10 @@ pub enum Outcome {
 pub struct Digestion {
     pub outcome: Outcome,
     pub repairs: Vec<Repair>,
+    /// Human or policy-layer answers applied during this digestion. This is
+    /// separate from repairs: an answer is an accountable decision, not a
+    /// parser transformation.
+    pub answers: Vec<Answer>,
 }
 
 impl Digestion {
@@ -191,6 +245,56 @@ pub fn digest(raw: &str, schema: &Schema) -> Result<Digestion, ParseError> {
     let mut repairs = Vec::new();
     let value = parse_leniently(raw, &mut repairs)?;
 
+    Ok(check_value(value, schema, repairs, Vec::new()))
+}
+
+/// Apply answers only to ambiguities Digest actually raised, then validate
+/// the result again. Missing answers remain questions; unrelated paths cannot
+/// be overwritten through this API.
+pub fn digest_with_answers(
+    raw: &str,
+    schema: &Schema,
+    answers: impl IntoIterator<Item = Answer>,
+) -> Result<Digestion, AnswerError> {
+    let mut repairs = Vec::new();
+    let mut value = parse_leniently(raw, &mut repairs)?;
+
+    let mut probe_repairs = repairs.clone();
+    let mut questions = Vec::new();
+    let _ = check(
+        value.clone(),
+        schema,
+        "$",
+        &mut probe_repairs,
+        &mut questions,
+    );
+    let requested: std::collections::BTreeSet<String> = questions
+        .into_iter()
+        .map(|question| question.path)
+        .collect();
+
+    let mut applied = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for answer in answers {
+        if !requested.contains(&answer.path) {
+            return Err(AnswerError::NotRequested { path: answer.path });
+        }
+        if !seen.insert(answer.path.clone()) {
+            return Err(AnswerError::Duplicate { path: answer.path });
+        }
+        set_json_path(&mut value, &answer.path, answer.value.clone())?;
+        applied.push(answer);
+    }
+
+    Ok(check_value(value, schema, repairs, applied))
+}
+
+fn check_value(
+    value: Value,
+    schema: &Schema,
+    mut repairs: Vec<Repair>,
+    answers: Vec<Answer>,
+) -> Digestion {
     let mut questions = Vec::new();
     let checked = check(value, schema, "$", &mut repairs, &mut questions);
 
@@ -199,7 +303,93 @@ pub fn digest(raw: &str, schema: &Schema) -> Result<Digestion, ParseError> {
     } else {
         Outcome::Clarify(questions)
     };
-    Ok(Digestion { outcome, repairs })
+    Digestion {
+        outcome,
+        repairs,
+        answers,
+    }
+}
+
+fn set_json_path(root: &mut Value, path: &str, replacement: Value) -> Result<(), AnswerError> {
+    if path == "$" {
+        *root = replacement;
+        return Ok(());
+    }
+    let segments = parse_json_path(path).ok_or_else(|| AnswerError::InvalidPath {
+        path: path.to_string(),
+    })?;
+    let mut current = root;
+    for segment in &segments[..segments.len().saturating_sub(1)] {
+        current = descend(current, segment).ok_or_else(|| AnswerError::InvalidPath {
+            path: path.to_string(),
+        })?;
+    }
+    match (segments.last(), current) {
+        (Some(PathSegment::Key(key)), Value::Obj(object)) if object.contains_key(key) => {
+            object.insert(key.clone(), replacement);
+            Ok(())
+        }
+        (Some(PathSegment::Index(index)), Value::Arr(array)) if *index < array.len() => {
+            array[*index] = replacement;
+            Ok(())
+        }
+        _ => Err(AnswerError::InvalidPath {
+            path: path.to_string(),
+        }),
+    }
+}
+
+#[derive(Debug)]
+enum PathSegment {
+    Key(String),
+    Index(usize),
+}
+
+fn parse_json_path(path: &str) -> Option<Vec<PathSegment>> {
+    let bytes = path.as_bytes();
+    if !path.starts_with('$') || path.len() == 1 {
+        return None;
+    }
+    let mut segments = Vec::new();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'.' => {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'.' && bytes[i] != b'[' {
+                    i += 1;
+                }
+                if start == i {
+                    return None;
+                }
+                segments.push(PathSegment::Key(path[start..i].to_string()));
+            }
+            b'[' => {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if start == i || bytes.get(i) != Some(&b']') {
+                    return None;
+                }
+                let index = path[start..i].parse().ok()?;
+                segments.push(PathSegment::Index(index));
+                i += 1;
+            }
+            _ => return None,
+        }
+    }
+    (!segments.is_empty()).then_some(segments)
+}
+
+fn descend<'a>(value: &'a mut Value, segment: &PathSegment) -> Option<&'a mut Value> {
+    match (segment, value) {
+        (PathSegment::Key(key), Value::Obj(object)) => object.get_mut(key),
+        (PathSegment::Index(index), Value::Arr(array)) => array.get_mut(*index),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +1150,57 @@ mod tests {
             }
             other => panic!("expected clarification, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_requested_answer_is_applied_and_recorded() {
+        let raw = r#"{"item": "espresso", "qty": "2 or 3"}"#;
+        let d = digest_with_answers(
+            raw,
+            &order_schema(),
+            [Answer::new("$.qty", Value::Num(2.0))],
+        )
+        .unwrap();
+
+        assert!(d.is_resolved());
+        assert_eq!(d.answers, vec![Answer::new("$.qty", Value::Num(2.0))]);
+        match d.outcome {
+            Outcome::Resolved(Value::Obj(object)) => {
+                assert_eq!(object.get("qty"), Some(&Value::Num(2.0)));
+            }
+            other => panic!("expected answered value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn answers_cannot_mutate_paths_digest_did_not_question() {
+        let raw = r#"{"item": "espresso", "qty": "2 or 3"}"#;
+        let error = digest_with_answers(
+            raw,
+            &order_schema(),
+            [Answer::new("$.item", Value::Str("tea".into()))],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            AnswerError::NotRequested {
+                path: "$.item".into()
+            }
+        );
+    }
+
+    #[test]
+    fn answers_support_ambiguous_array_members() {
+        let raw = r#"["2 or 3"]"#;
+        let d = digest_with_answers(
+            raw,
+            &Schema::Arr(Box::new(Schema::num())),
+            [Answer::new("$[0]", Value::Num(3.0))],
+        )
+        .unwrap();
+
+        assert!(d.is_resolved());
     }
 
     #[test]

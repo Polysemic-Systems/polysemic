@@ -10,6 +10,9 @@
 //! - [`DriftWatch`]: total-variation distance between the distribution the
 //!   model's ontology assumes and the distribution your users actually
 //!   exhibit. When the weights stop matching the world, you hear about it.
+//! - [`OntologySnapshot`]: versioned category definitions. Comparing two
+//!   snapshots reveals added, removed, and redefined concepts even when no
+//!   numeric distribution is available.
 //! - [`Legislature`]: the explicit constraint layer over the grown one.
 //!   Grown meaning answers by default; legislated rules overrule it where
 //!   someone has taken responsibility for doing so — and every resolution
@@ -150,6 +153,121 @@ impl DriftWatch {
 }
 
 // ---------------------------------------------------------------------------
+// Ontology versions
+// ---------------------------------------------------------------------------
+
+/// A versioned, inspectable vocabulary. Definitions are intentionally plain
+/// text in this POC: a production Strata can replace comparison with semantic
+/// embeddings while keeping the version and diff contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OntologySnapshot {
+    pub name: String,
+    pub version: String,
+    pub concepts: BTreeMap<String, String>,
+}
+
+impl OntologySnapshot {
+    pub fn new<K: Into<String>, V: Into<String>>(
+        name: &str,
+        version: &str,
+        concepts: impl IntoIterator<Item = (K, V)>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            version: version.to_string(),
+            concepts: concepts
+                .into_iter()
+                .map(|(concept, definition)| (concept.into(), definition.into()))
+                .collect(),
+        }
+    }
+
+    /// Compare this sedimented ontology with a newer observed vocabulary.
+    pub fn compare(&self, observed: &OntologySnapshot) -> OntologyDrift {
+        let added = observed
+            .concepts
+            .keys()
+            .filter(|concept| !self.concepts.contains_key(*concept))
+            .cloned()
+            .collect();
+        let removed = self
+            .concepts
+            .keys()
+            .filter(|concept| !observed.concepts.contains_key(*concept))
+            .cloned()
+            .collect();
+        let redefined = self
+            .concepts
+            .iter()
+            .filter_map(|(concept, grown_definition)| {
+                let observed_definition = observed.concepts.get(concept)?;
+                (canonical_definition(grown_definition)
+                    != canonical_definition(observed_definition))
+                .then(|| concept.clone())
+            })
+            .collect();
+
+        OntologyDrift {
+            ontology: self.name.clone(),
+            from_version: self.version.clone(),
+            to_version: observed.version.clone(),
+            added,
+            removed,
+            redefined,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OntologyDrift {
+    pub ontology: String,
+    pub from_version: String,
+    pub to_version: String,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub redefined: Vec<String>,
+}
+
+impl OntologyDrift {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && self.redefined.is_empty()
+    }
+}
+
+impl fmt::Display for OntologyDrift {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ontology {:?} {} → {}: +{} -{} ~{}",
+            self.ontology,
+            self.from_version,
+            self.to_version,
+            self.added.len(),
+            self.removed.len(),
+            self.redefined.len()
+        )?;
+        if !self.added.is_empty() {
+            write!(f, " · added [{}]", self.added.join(", "))?;
+        }
+        if !self.removed.is_empty() {
+            write!(f, " · removed [{}]", self.removed.join(", "))?;
+        }
+        if !self.redefined.is_empty() {
+            write!(f, " · redefined [{}]", self.redefined.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+fn canonical_definition(definition: &str) -> String {
+    definition
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+// ---------------------------------------------------------------------------
 // The legislated layer
 // ---------------------------------------------------------------------------
 
@@ -249,6 +367,43 @@ mod tests {
         assert!(watch.compare("family", &grown, &same).is_none());
         let alert = watch.compare("family", &grown, &moved).unwrap();
         assert!(alert.distance > 0.2);
+    }
+
+    #[test]
+    fn ontology_diff_names_added_removed_and_redefined_concepts() {
+        let grown = OntologySnapshot::new(
+            "family",
+            "model-v1",
+            [
+                ("nuclear", "parents and dependent children"),
+                ("extended", "relatives beyond the household"),
+                ("legacy", "a retired historical bucket"),
+            ],
+        );
+        let observed = OntologySnapshot::new(
+            "family",
+            "users-2026-07",
+            [
+                ("nuclear", "a household's primary care network"),
+                ("extended", "relatives beyond the household"),
+                ("chosen", "people intentionally recognized as family"),
+            ],
+        );
+
+        let drift = grown.compare(&observed);
+        assert_eq!(drift.added, vec!["chosen"]);
+        assert_eq!(drift.removed, vec!["legacy"]);
+        assert_eq!(drift.redefined, vec!["nuclear"]);
+        assert!(!drift.is_empty());
+        assert!(drift.to_string().contains("added [chosen]"));
+    }
+
+    #[test]
+    fn ontology_diff_ignores_case_and_whitespace_only_changes() {
+        let grown = OntologySnapshot::new("units", "v1", [("metric", "SI  units")]);
+        let observed = OntologySnapshot::new("units", "v2", [("metric", "si units")]);
+
+        assert!(grown.compare(&observed).is_empty());
     }
 
     #[test]

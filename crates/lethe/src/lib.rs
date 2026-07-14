@@ -7,6 +7,8 @@
 //!   Use it or lose it — Nietzsche's active forgetting as a half-life.
 //! - [`Lethe::sweep`] is the excretory organ: expired and faded memories
 //!   are released on schedule, not on panic.
+//! - [`RetentionPolicy`] names why a memory has its lifetime; TTL remains a
+//!   required value, but fleets can now audit the policy that selected it.
 //! - [`Lethe::forget`] is erasure on demand, and it returns a receipt:
 //!   deletion you can point to. Right-to-be-forgotten as an API call,
 //!   not a fire drill.
@@ -17,6 +19,23 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
+/// A named retention decision. The hosted control plane can distribute and
+/// version these policies; the open core only needs the name and TTL contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetentionPolicy {
+    pub name: String,
+    pub ttl: Duration,
+}
+
+impl RetentionPolicy {
+    pub fn new(name: &str, ttl: Duration) -> Self {
+        Self {
+            name: name.to_string(),
+            ttl,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Memory {
     pub id: u64,
@@ -25,6 +44,7 @@ pub struct Memory {
     pub born: Instant,
     pub last_touch: Instant,
     pub ttl: Duration,
+    pub retention_policy: String,
     salience: f64,
 }
 
@@ -39,6 +59,24 @@ impl Memory {
 pub struct Swept {
     pub expired: usize,
     pub faded: usize,
+}
+
+/// A scheduled sweep's deletion proof. It records only counts and a
+/// commitment hash, not the released contents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepReceipt {
+    pub swept: Swept,
+    pub receipt: String,
+}
+
+impl fmt::Display for SweepReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} expired, {} faded — {}",
+            self.swept.expired, self.swept.faded, self.receipt
+        )
+    }
 }
 
 /// Proof of deletion. The hash covers the ids and contents of everything
@@ -80,6 +118,29 @@ impl Lethe {
     /// Store a memory. TTL is mandatory: nothing enters without knowing how
     /// it will leave.
     pub fn remember(&mut self, subject: &str, content: &str, ttl: Duration, now: Instant) -> u64 {
+        self.remember_named(subject, content, ttl, "ad-hoc", now)
+    }
+
+    /// Store under a named retention policy, preserving the policy name on
+    /// the memory so lifecycle decisions remain inspectable.
+    pub fn remember_with_policy(
+        &mut self,
+        subject: &str,
+        content: &str,
+        policy: &RetentionPolicy,
+        now: Instant,
+    ) -> u64 {
+        self.remember_named(subject, content, policy.ttl, &policy.name, now)
+    }
+
+    fn remember_named(
+        &mut self,
+        subject: &str,
+        content: &str,
+        ttl: Duration,
+        retention_policy: &str,
+        now: Instant,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.entries.push(Memory {
@@ -89,6 +150,7 @@ impl Lethe {
             born: now,
             last_touch: now,
             ttl,
+            retention_policy: retention_policy.to_string(),
             salience: 1.0,
         });
         id
@@ -126,12 +188,20 @@ impl Lethe {
     /// The scheduled act of forgetting. Releases everything expired (TTL)
     /// or faded (effective salience below the floor).
     pub fn sweep(&mut self, now: Instant) -> Swept {
+        self.sweep_with_receipt(now).swept
+    }
+
+    /// Sweep with a receipt committing to each released memory and its
+    /// release reason. The receipt is a tombstone, not a backup.
+    pub fn sweep_with_receipt(&mut self, now: Instant) -> SweepReceipt {
         let mut expired = 0;
         let mut faded = 0;
+        let mut hash: u64 = FNV_OFFSET;
         let half_life = self.half_life;
         let floor = self.floor;
         self.entries.retain(|m| {
             if m.expired(now) {
+                hash = hash_release(hash, m, b"expired");
                 expired += 1;
                 return false;
             }
@@ -139,12 +209,16 @@ impl Lethe {
             let hl = half_life.as_secs_f64().max(f64::EPSILON);
             let eff = m.salience * 0.5_f64.powf(elapsed / hl);
             if eff < floor {
+                hash = hash_release(hash, m, b"faded");
                 faded += 1;
                 return false;
             }
             true
         });
-        Swept { expired, faded }
+        SweepReceipt {
+            swept: Swept { expired, faded },
+            receipt: format!("lethe://sweep/{hash:016x}"),
+        }
     }
 
     /// Erasure on demand. Everything matching the predicate is released,
@@ -191,6 +265,14 @@ fn fnv1a_extend(mut h: u64, bytes: &[u8]) -> u64 {
     h
 }
 
+fn hash_release(mut hash: u64, memory: &Memory, reason: &[u8]) -> u64 {
+    hash = fnv1a_extend(hash, &memory.id.to_le_bytes());
+    hash = fnv1a_extend(hash, memory.subject.as_bytes());
+    hash = fnv1a_extend(hash, memory.content.as_bytes());
+    hash = fnv1a_extend(hash, memory.retention_policy.as_bytes());
+    fnv1a_extend(hash, reason)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +297,38 @@ mod tests {
             }
         );
         assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn named_retention_policy_is_carried_by_memory() {
+        let t0 = Instant::now();
+        let mut store = Lethe::new(secs(3600), 0.05);
+        let policy = RetentionPolicy::new("customer-preference-v1", secs(90 * 24 * 3600));
+
+        store.remember_with_policy("user:1", "prefers oat milk", &policy, t0);
+        let recalled = store.recall("oat", t0);
+
+        assert_eq!(recalled[0].retention_policy, "customer-preference-v1");
+        assert_eq!(recalled[0].ttl, policy.ttl);
+    }
+
+    #[test]
+    fn scheduled_sweep_returns_a_deletion_receipt() {
+        let t0 = Instant::now();
+        let mut store = Lethe::new(secs(3600), 0.05);
+        store.remember("scratch", "temporary context", secs(60), t0);
+
+        let receipt = store.sweep_with_receipt(t0 + secs(61));
+
+        assert_eq!(
+            receipt.swept,
+            Swept {
+                expired: 1,
+                faded: 0
+            }
+        );
+        assert!(receipt.receipt.starts_with("lethe://sweep/"));
+        assert!(store.is_empty());
     }
 
     #[test]

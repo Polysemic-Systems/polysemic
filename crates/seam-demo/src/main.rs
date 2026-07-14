@@ -1,9 +1,10 @@
 //! One messy model output, three organs. Run with `cargo run -p seam-demo`.
 
-use digest::{digest, Field, Outcome, Schema};
-use lethe::Lethe;
+use digest::{digest, digest_with_answers, Answer, Field, Outcome, Schema};
+use lethe::{Lethe, RetentionPolicy};
+use polysemic_core::Value;
 use std::time::{Duration, Instant};
-use strata::{dist, DriftWatch, Labor, Legislature, ProvenanceLabel};
+use strata::{dist, DriftWatch, Labor, Legislature, OntologySnapshot, ProvenanceLabel};
 
 fn main() {
     println!("── the seam, before ─────────────────────────────────────");
@@ -44,11 +45,17 @@ fn main() {
     }
     println!();
 
-    // The user answers "2". Second pass resolves.
-    let answered = "{'item': 'espresso', 'qty': 2, 'gift_wrap': True}";
-    let d2 = digest(answered, &schema).expect("unrecoverable text");
+    // The user answers "2". Digest applies only the path it asked about,
+    // preserves the original output, and records the answer separately from
+    // parser repairs.
+    let d2 = digest_with_answers(raw, &schema, [Answer::new("$.qty", Value::Num(2.0))])
+        .expect("valid clarification");
     if let Outcome::Resolved(v) = &d2.outcome {
         println!("   after clarification → {v}");
+        println!(
+            "   answer ledger       → {} = {}",
+            d2.answers[0].path, d2.answers[0].value
+        );
     }
     println!();
 
@@ -71,6 +78,25 @@ fn main() {
         println!("   {alert}");
     }
 
+    let grown_ontology = OntologySnapshot::new(
+        "family",
+        "model-v1",
+        [
+            ("nuclear", "parents and dependent children"),
+            ("extended", "relatives beyond the household"),
+        ],
+    );
+    let observed_ontology = OntologySnapshot::new(
+        "family",
+        "users-2026-07",
+        [
+            ("nuclear", "a household's primary care network"),
+            ("extended", "relatives beyond the household"),
+            ("chosen", "people intentionally recognized as family"),
+        ],
+    );
+    println!("   {}", grown_ontology.compare(&observed_ontology));
+
     let mut law = Legislature::new();
     law.enact("units", "metric", "product ships in the EU");
     println!(
@@ -83,16 +109,15 @@ fn main() {
     println!("── lethe: the excretion ─────────────────────────────────");
     let t0 = Instant::now();
     let mut memory = Lethe::new(Duration::from_secs(3600), 0.05);
-    memory.remember(
-        "user:8842",
-        "prefers oat milk",
+    let preference_policy = RetentionPolicy::new(
+        "customer-preference-v1",
         Duration::from_secs(90 * 24 * 3600),
-        t0,
     );
-    memory.remember(
+    memory.remember_with_policy("user:8842", "prefers oat milk", &preference_policy, t0);
+    memory.remember_with_policy(
         "user:8842",
         "orders espresso, usually 2",
-        Duration::from_secs(90 * 24 * 3600),
+        &preference_policy,
         t0,
     );
     memory.remember(
@@ -105,11 +130,8 @@ fn main() {
     let recalled = memory.recall("espresso", t0 + Duration::from_secs(5));
     println!("   recalled {} memory(ies) about espresso", recalled.len());
 
-    let swept = memory.sweep(t0 + Duration::from_secs(120));
-    println!(
-        "   sweep → {} expired, {} faded (the garden, pruned)",
-        swept.expired, swept.faded
-    );
+    let sweep_receipt = memory.sweep_with_receipt(t0 + Duration::from_secs(120));
+    println!("   scheduled sweep → {sweep_receipt}");
 
     let receipt = memory.forget(|m| m.subject == "user:8842");
     println!("   forget(user:8842) → {receipt}");

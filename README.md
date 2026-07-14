@@ -8,9 +8,9 @@ Infrastructure for systems that are alive. Three organs, zero dependencies.
 
 | Crate | Organ | What it does |
 |---|---|---|
-| `digest` | **metabolism** | The seam layer. Repairs malformed model output (fences, prose, single quotes, Python literals, bare keys, trailing commas) with every fix *named*; validates against a small schema language; converts genuine ambiguity (`"2 or 3"`) into a `Question` instead of a guess; reconciles multiple samples by field-wise majority. |
-| `strata` | **sediment** | Ontology observability. `ProvenanceLabel` is a shipping manifest for training data; `DriftWatch` measures total-variation distance between the model's grown categories and your users' reality; `Legislature` is the explicit, contestable rule layer over the grown one — every resolution names which layer answered. |
-| `lethe` | **excretion** | The delete path. Every memory is born with a TTL; salience decays by half-life unless recall reinforces it; `sweep` prunes on schedule; `forget` erases on demand and returns a receipt (`lethe://era/…`). |
+| `digest` | **metabolism** | The seam layer. Repairs malformed model output with every fix *named*; converts genuine ambiguity into a `Question`; applies answers only to requested paths with a separate answer ledger; reconciles multiple samples by field-wise majority. |
+| `strata` | **sediment** | Ontology observability. `ProvenanceLabel` names the corpus; `DriftWatch` measures distribution drift; versioned `OntologySnapshot`s expose added, removed, and redefined concepts; `Legislature` is the contestable constraint layer. |
+| `lethe` | **excretion** | The delete path. Every memory has a TTL and can carry a named `RetentionPolicy`; salience decays unless recall reinforces it; scheduled sweeps and on-demand erasure both return receipts. |
 | `polysemic-core` | — | The univocal interior: a strict JSON `Value` and parser. Polysemy lives at the boundary, where it belongs. |
 
 ## Design commitments
@@ -26,6 +26,18 @@ Infrastructure for systems that are alive. Three organs, zero dependencies.
    part of the resolution.
 6. **Zero dependencies.** `std` only. Nothing to hoard.
 
+## Diagnose the missing organ
+
+Every AI system drifts toward one of three deaths:
+
+| Diagnosis | Evidence | Prescription |
+|---|---|---|
+| **The Hoarder** | Unbounded memory, no retention owner, deletion cannot be demonstrated | Lethe |
+| **The Amnesiac** | Categories and decisions lack provenance; ontology changes are invisible | Strata |
+| **The Museum** | Formally clean output contracts reject or silently flatten unexpected meaning | Digest |
+
+The diagnosis is evidence-led, not branding-led: a system can suffer more than one death, and a missing fact becomes a question rather than a forced label.
+
 ## Run it
 
 ```sh
@@ -40,14 +52,15 @@ The demo pushes one realistic mess through all three organs:
 ```
 
 …wrapped in prose and a markdown fence. Digest strips, requotes, and
-repairs — then *asks* about the quantity instead of guessing. Strata
-prints the provenance label and flags category drift. Lethe remembers,
-prunes, and forgets with a receipt.
+repairs — then *asks* about the quantity instead of guessing and applies the
+answer through a separate ledger. Strata prints provenance, flags distribution
+drift, and diffs ontology versions. Lethe remembers under a named policy,
+prunes on schedule, and produces sweep and erasure receipts.
 
 ## Honest limitations
 
 This is a working skeleton, not a product: the schema language is small on
-purpose, the erasure receipt uses FNV-1a (swap in a cryptographic hash for
-anything real), `lethe` is in-memory, and the repair passes are heuristic
-scanners, not a grammar. The seams where you'd extend it are marked in the
-doc comments.
+purpose, receipt hashes use FNV-1a (swap in a cryptographic hash for anything
+real), `lethe` is in-memory, ontology definitions are compared structurally
+rather than with embeddings, and the repair passes are heuristic scanners,
+not a grammar. The seams where you'd extend them are marked in the doc comments.
