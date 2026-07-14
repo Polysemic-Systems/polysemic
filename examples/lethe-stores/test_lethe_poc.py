@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).with_name("lethe_poc.py")
 SPEC = importlib.util.spec_from_file_location("lethe_poc", MODULE_PATH)
@@ -74,6 +75,15 @@ class ReceiptTests(unittest.TestCase):
     def test_malformed_store_output_is_rejected(self):
         with self.assertRaises(lethe_poc.StoreCommandError):
             lethe_poc._parse_deleted("missing|field")
+
+    def test_store_command_timeout_names_the_boundary(self):
+        expired = lethe_poc.subprocess.TimeoutExpired(["docker", "compose"], 30)
+
+        with mock.patch.object(lethe_poc.subprocess, "run", side_effect=expired):
+            with self.assertRaisesRegex(lethe_poc.StoreCommandError, "exceeded 30s"):
+                lethe_poc.Compose._run(
+                    "docker", "compose", input_text="PING", timeout_seconds=30
+                )
 
 
 if __name__ == "__main__":

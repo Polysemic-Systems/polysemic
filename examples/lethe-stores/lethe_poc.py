@@ -117,10 +117,16 @@ class Compose:
             service,
             *args,
             input_text=input_text,
+            timeout_seconds=30,
         )
 
     @staticmethod
-    def _run(*args: str, input_text: str | None = None, stream: bool = False) -> str:
+    def _run(
+        *args: str,
+        input_text: str | None = None,
+        stream: bool = False,
+        timeout_seconds: int | None = None,
+    ) -> str:
         try:
             completed = subprocess.run(
                 args,
@@ -129,10 +135,15 @@ class Compose:
                 text=True,
                 capture_output=not stream,
                 check=False,
+                timeout=timeout_seconds,
             )
         except FileNotFoundError as error:
             raise StoreCommandError(
                 f"required command is missing: {args[0]}"
+            ) from error
+        except subprocess.TimeoutExpired as error:
+            raise StoreCommandError(
+                f"{' '.join(args[:8])} … exceeded {timeout_seconds}s"
             ) from error
         if completed.returncode:
             if stream:
@@ -428,10 +439,14 @@ def run_demo(compose: Compose) -> None:
     )
     redis.remember("user:kept", "unrelated memory", policy, 2_592_000)
 
-    print("\nErasing user:8842 from every configured store")
-    receipts = [postgres.forget_subject(subject), redis.forget_subject(subject)]
-    for receipt in receipts:
-        print(f"  {receipt}")
+    print("\nErasing user:8842 from every configured store", flush=True)
+    print("  PostgreSQL+pgvector …", flush=True)
+    postgres_receipt = postgres.forget_subject(subject)
+    print(f"  {postgres_receipt}", flush=True)
+    print("  Redis …", flush=True)
+    redis_receipt = redis.forget_subject(subject)
+    print(f"  {redis_receipt}", flush=True)
+    receipts = [postgres_receipt, redis_receipt]
 
     complete = all(receipt.erased == len(memories) for receipt in receipts)
     complete = complete and postgres.count_subject(subject) == 0
