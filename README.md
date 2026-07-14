@@ -69,8 +69,11 @@ python3 examples/lethe-stores/lethe_poc.py demo
 
 The dependency-free POC starts PostgreSQL+pgvector and Redis, writes the same
 subject to both, erases it from both, verifies unrelated data survived, and
-prints an independent SHA-256 receipt per store. See the
+prints an independent SHA-256 receipt per store plus an aggregate receipt. It
+also demonstrates idempotent request replay, partial-failure reporting, and an
+optional no-LLM LangGraph lifecycle. See the
 [`examples/lethe-stores` quickstart](examples/lethe-stores/README.md) and the
+[`erasure contract`](docs/erasure-contract.md), plus the
 [`store-selection` evidence](docs/store-selection.md).
 
 ## Honest limitations

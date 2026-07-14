@@ -34,7 +34,10 @@ jobs:
           docker compose version
 
       - name: Install pinned Python quality tools
-        run: python3 -m pip install --disable-pip-version-check -r requirements-dev.txt
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          -r requirements-dev.txt
+          -r examples/lethe-stores/requirements-langgraph.txt
 
       - name: Check Rust formatting
         run: cargo fmt --all --check
@@ -62,6 +65,9 @@ jobs:
 
       - name: Run PostgreSQL and Redis erasure proof
         run: python3 examples/lethe-stores/lethe_poc.py demo
+
+      - name: Run LangGraph memory-lifecycle proof
+        run: python3 examples/lethe-stores/langgraph_example.py
 
       - name: Remove store containers and volumes
         if: always()

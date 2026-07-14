@@ -15,3 +15,12 @@ CREATE INDEX IF NOT EXISTS lethe_memories_subject_idx
 
 CREATE INDEX IF NOT EXISTS lethe_memories_expires_at_idx
     ON lethe_memories (expires_at);
+
+CREATE TABLE IF NOT EXISTS lethe_erasure_requests (
+    store text NOT NULL,
+    request_id text NOT NULL,
+    subject_digest text NOT NULL,
+    result_json text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (store, request_id)
+);

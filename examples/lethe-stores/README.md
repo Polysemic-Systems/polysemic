@@ -25,12 +25,34 @@ store it is operating on, so a client-side failure has a visible boundary.
 Expected shape:
 
 ```text
-Erasing user:8842 from every configured store
-  postgres-pgvector: 2 erased — lethe://store/postgres-pgvector/…
-  redis: 2 erased — lethe://store/redis/…
+Erasing user:8842 from every configured store (demo-…)
+  postgres-pgvector: erased, 2 erased, verified absent — lethe://store/postgres-pgvector/…
+  redis: erased, 2 erased, verified absent — lethe://store/redis/…
+  aggregate: complete — lethe://request/demo-…/…
 
 Cross-store erasure complete: yes
+Idempotent request replay: yes
 Unrelated memory preserved: yes
+```
+
+## LangGraph example
+
+The optional example uses a real LangGraph `StateGraph` but no language model,
+API key, or hosted service. It writes the same agent preference to both stores,
+coordinates deletion, replays the request ID, verifies absence, and routes any
+partial failure to a `human_review` outcome.
+
+```sh
+python3 -m pip install -r examples/lethe-stores/requirements-langgraph.txt
+python3 examples/lethe-stores/langgraph_example.py
+```
+
+Expected ending:
+
+```text
+aggregate: complete — lethe://request/langgraph-…/…
+idempotent replay: yes
+graph outcome: erasure_complete
 ```
 
 Stop the containers while retaining their local volumes:
@@ -56,6 +78,11 @@ python3 examples/lethe-stores/lethe_poc.py destroy
 - Explicit subject erasure returns one independent receipt per store. The caller
   can require every configured store to report success before declaring the
   request complete.
+- A typed `ErasureAdapter` contract re-verifies absence after every store call.
+  `ErasureCoordinator` reports `complete`, `partial`, or `failed` and commits all
+  store outcomes into one aggregate receipt.
+- Reusing a request ID returns the original store and aggregate receipts. Reusing
+  it for another subject is rejected as an idempotency conflict.
 - A Redis receipt proves removal from the logical keyspace. Because `UNLINK`
   reclaims allocations asynchronously, it does not prove immediate physical
   memory reclamation.
@@ -68,8 +95,15 @@ has no authentication or retry policy, and does not cover replicas, WAL/AOF,
 snapshots, object storage, or backups. Redis can hard-expire a key before the
 sweeper observes it; that condition is counted as an **unreceipted expiration**
 rather than presented as proof. A production adapter should use native clients,
-transactions, cryptographic signing, idempotency keys, and store-specific backup
-erasure policies.
+atomic deletion-and-ledger transactions, cryptographic signing, and
+store-specific backup erasure policies.
+
+Successful request results are stored in PostgreSQL and Redis for replay, but a
+process crash between deletion and result persistence remains a POC limitation.
+Production adapters must make that transition atomic. Subject commitments are
+plain SHA-256 in the POC; production should use a keyed digest to resist guessing.
 
 The selection evidence and remaining interview questions are recorded in
-[`../../docs/store-selection.md`](../../docs/store-selection.md).
+[`../../docs/store-selection.md`](../../docs/store-selection.md). The typed
+status, idempotency, and aggregation rules are specified in the
+[`erasure contract`](../../docs/erasure-contract.md).

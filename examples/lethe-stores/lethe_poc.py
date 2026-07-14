@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import json
 import math
 import subprocess
 import time
@@ -19,6 +18,15 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+
+from lethe_contract import (
+    DeletedRecord as DeletedMemory,
+    ErasureCoordinator,
+    IdempotencyConflict,
+    StoreErasureResult,
+    build_store_result,
+    subject_commitment,
+)
 
 HERE = Path(__file__).resolve().parent
 COMPOSE_FILE = HERE / "compose.yaml"
@@ -32,26 +40,8 @@ class StoreCommandError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class DeletedMemory:
-    memory_id: str
-    content_b64: str
-    retention_policy_b64: str
-
-
-@dataclass(frozen=True)
-class StoreReceipt:
-    store: str
-    subject: str
-    erased: int
-    receipt: str
-
-    def __str__(self) -> str:
-        return f"{self.store}: {self.erased} erased — {self.receipt}"
-
-
-@dataclass(frozen=True)
 class SweepOutcome:
-    receipt: StoreReceipt
+    receipt: StoreErasureResult
     unreceipted_expirations: int = 0
 
 
@@ -59,21 +49,34 @@ def _b64(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
 
+def _from_b64(value: str) -> str:
+    return base64.b64decode(value).decode("utf-8")
+
+
 def _receipt(
-    store: str, subject: str, deleted: Sequence[DeletedMemory]
-) -> StoreReceipt:
-    canonical = [
-        [item.memory_id, item.content_b64, item.retention_policy_b64]
-        for item in sorted(deleted, key=lambda item: item.memory_id)
-    ]
-    payload = json.dumps(
-        {"store": store, "subject": subject, "deleted": canonical},
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    digest = hashlib.sha256(payload).hexdigest()
-    return StoreReceipt(store, subject, len(deleted), f"lethe://store/{store}/{digest}")
+    store: str,
+    request_id: str,
+    subject: str,
+    deleted: Sequence[DeletedMemory],
+    *,
+    verified_absent: bool,
+) -> StoreErasureResult:
+    return build_store_result(
+        store,
+        request_id,
+        subject,
+        deleted,
+        verified_absent=verified_absent,
+    )
+
+
+def _validate_replay(
+    result: StoreErasureResult, store: str, request_id: str, subject: str
+) -> None:
+    if result.store != store or result.request_id != request_id:
+        raise IdempotencyConflict("stored erasure result belongs to another request")
+    if result.subject_digest != subject_commitment(subject):
+        raise IdempotencyConflict("request ID belongs to a different subject")
 
 
 def _parse_deleted(output: str) -> list[DeletedMemory]:
@@ -160,6 +163,10 @@ class PostgresStore:
     def __init__(self, compose: Compose):
         self.compose = compose
 
+    @property
+    def name(self) -> str:
+        return self.STORE_NAME
+
     def _psql(self, sql: str, **variables: str) -> str:
         variable_args = [f"--set={name}={value}" for name, value in variables.items()]
         return self.compose.exec(
@@ -189,7 +196,7 @@ class PostgresStore:
         )
 
     def reset_poc_data(self) -> None:
-        self._psql("TRUNCATE TABLE lethe_memories;")
+        self._psql("TRUNCATE TABLE lethe_memories, lethe_erasure_requests;")
 
     def remember(
         self,
@@ -233,7 +240,56 @@ class PostgresStore:
             )
         return memory_id
 
-    def forget_subject(self, subject: str) -> StoreReceipt:
+    def _load_erasure(self, subject: str, request_id: str) -> StoreErasureResult | None:
+        output = self._psql(
+            """
+            SELECT replace(
+                encode(convert_to(result_json, 'UTF8'), 'base64'),
+                E'\n',
+                ''
+            )
+            FROM lethe_erasure_requests
+            WHERE store = :'store'
+              AND request_id = convert_from(decode(:'request_id_b64', 'base64'), 'UTF8');
+            """,
+            store=self.STORE_NAME,
+            request_id_b64=_b64(request_id),
+        ).strip()
+        if not output:
+            return None
+        result = StoreErasureResult.from_json(_from_b64(output))
+        _validate_replay(result, self.STORE_NAME, request_id, subject)
+        return result
+
+    def _save_erasure(
+        self, subject: str, result: StoreErasureResult
+    ) -> StoreErasureResult:
+        self._psql(
+            """
+            INSERT INTO lethe_erasure_requests
+                (store, request_id, subject_digest, result_json)
+            VALUES (
+                :'store',
+                convert_from(decode(:'request_id_b64', 'base64'), 'UTF8'),
+                :'subject_digest',
+                convert_from(decode(:'result_b64', 'base64'), 'UTF8')
+            )
+            ON CONFLICT (store, request_id) DO NOTHING;
+            """,
+            store=self.STORE_NAME,
+            request_id_b64=_b64(result.request_id),
+            subject_digest=result.subject_digest,
+            result_b64=_b64(result.to_json()),
+        )
+        winner = self._load_erasure(subject, result.request_id)
+        if winner is None:
+            raise StoreCommandError("PostgreSQL did not persist the erasure result")
+        return winner
+
+    def erase_subject(self, subject: str, request_id: str) -> StoreErasureResult:
+        existing = self._load_erasure(subject, request_id)
+        if existing is not None:
+            return existing
         output = self._psql(
             """
             WITH deleted AS (
@@ -250,7 +306,19 @@ class PostgresStore:
             """,
             subject_b64=_b64(subject),
         )
-        return _receipt(self.STORE_NAME, subject, _parse_deleted(output))
+        result = _receipt(
+            self.STORE_NAME,
+            request_id,
+            subject,
+            _parse_deleted(output),
+            verified_absent=self.verify_subject_absent(subject),
+        )
+        return self._save_erasure(subject, result)
+
+    def forget_subject(
+        self, subject: str, request_id: str | None = None
+    ) -> StoreErasureResult:
+        return self.erase_subject(subject, request_id or str(uuid.uuid4()))
 
     def sweep(self) -> SweepOutcome:
         output = self._psql("""
@@ -267,7 +335,13 @@ class PostgresStore:
             ORDER BY id;
             """)
         return SweepOutcome(
-            _receipt(self.STORE_NAME, "expired", _parse_deleted(output))
+            _receipt(
+                self.STORE_NAME,
+                f"sweep:{int(time.time())}",
+                "expired",
+                _parse_deleted(output),
+                verified_absent=True,
+            )
         )
 
     def count_subject(self, subject: str) -> int:
@@ -280,6 +354,12 @@ class PostgresStore:
             subject_b64=_b64(subject),
         )
         return int(output.strip())
+
+    def verify_subject_absent(self, subject: str) -> bool:
+        return self.count_subject(subject) == 0
+
+    def health(self) -> bool:
+        return self._psql("SELECT 1;").strip() == "1"
 
 
 REDIS_REMEMBER_LUA = """
@@ -334,12 +414,25 @@ end
 return result
 """.strip()
 
+REDIS_SAVE_ERASURE_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  redis.call('HSET', KEYS[1],
+    'subject_digest', ARGV[1],
+    'result_b64', ARGV[2])
+end
+return redis.call('HGET', KEYS[1], 'result_b64')
+""".strip()
+
 
 class RedisStore:
     STORE_NAME = "redis"
 
     def __init__(self, compose: Compose):
         self.compose = compose
+
+    @property
+    def name(self) -> str:
+        return self.STORE_NAME
 
     def _redis(self, *args: str) -> list[str]:
         output = self.compose.exec("redis", "redis-cli", "--raw", *args)
@@ -349,6 +442,11 @@ class RedisStore:
     def _subject_index(subject: str) -> str:
         token = hashlib.sha256(subject.encode("utf-8")).hexdigest()
         return f"lethe:subject:{token}"
+
+    @staticmethod
+    def _erasure_key(request_id: str) -> str:
+        token = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+        return f"lethe:erasure:{token}"
 
     def reset_poc_data(self) -> None:
         keys = [key for key in self._redis("--scan", "--pattern", "lethe:*") if key]
@@ -385,7 +483,35 @@ class RedisStore:
             raise StoreCommandError(f"Redis returned unexpected key: {lines!r}")
         return memory_id
 
-    def forget_subject(self, subject: str) -> StoreReceipt:
+    def _load_erasure(self, subject: str, request_id: str) -> StoreErasureResult | None:
+        lines = self._redis("HGET", self._erasure_key(request_id), "result_b64")
+        if not lines or not lines[0]:
+            return None
+        result = StoreErasureResult.from_json(_from_b64(lines[0]))
+        _validate_replay(result, self.STORE_NAME, request_id, subject)
+        return result
+
+    def _save_erasure(
+        self, subject: str, result: StoreErasureResult
+    ) -> StoreErasureResult:
+        lines = self._redis(
+            "EVAL",
+            REDIS_SAVE_ERASURE_LUA,
+            "1",
+            self._erasure_key(result.request_id),
+            result.subject_digest,
+            _b64(result.to_json()),
+        )
+        if len(lines) != 1 or not lines[0]:
+            raise StoreCommandError("Redis did not persist the erasure result")
+        winner = StoreErasureResult.from_json(_from_b64(lines[0]))
+        _validate_replay(winner, self.STORE_NAME, result.request_id, subject)
+        return winner
+
+    def erase_subject(self, subject: str, request_id: str) -> StoreErasureResult:
+        existing = self._load_erasure(subject, request_id)
+        if existing is not None:
+            return existing
         lines = self._redis(
             "EVAL",
             REDIS_FORGET_LUA,
@@ -393,7 +519,19 @@ class RedisStore:
             self._subject_index(subject),
             REDIS_EXPIRIES,
         )
-        return _receipt(self.STORE_NAME, subject, _parse_redis_deleted(lines))
+        result = _receipt(
+            self.STORE_NAME,
+            request_id,
+            subject,
+            _parse_redis_deleted(lines),
+            verified_absent=self.verify_subject_absent(subject),
+        )
+        return self._save_erasure(subject, result)
+
+    def forget_subject(
+        self, subject: str, request_id: str | None = None
+    ) -> StoreErasureResult:
+        return self.erase_subject(subject, request_id or str(uuid.uuid4()))
 
     def sweep(self, now_epoch_seconds: int | None = None) -> SweepOutcome:
         now = int(time.time()) if now_epoch_seconds is None else now_epoch_seconds
@@ -402,7 +540,16 @@ class RedisStore:
             raise StoreCommandError("Redis sweep returned no result")
         missed = int(lines[0])
         deleted = _parse_redis_deleted(lines[1:])
-        return SweepOutcome(_receipt(self.STORE_NAME, "expired", deleted), missed)
+        return SweepOutcome(
+            _receipt(
+                self.STORE_NAME,
+                f"sweep:{now}",
+                "expired",
+                deleted,
+                verified_absent=True,
+            ),
+            missed,
+        )
 
     def count_subject(self, subject: str) -> int:
         keys = self._redis("SMEMBERS", self._subject_index(subject))
@@ -411,6 +558,12 @@ class RedisStore:
             if key and self._redis("EXISTS", key) == ["1"]:
                 count += 1
         return count
+
+    def verify_subject_absent(self, subject: str) -> bool:
+        return self.count_subject(subject) == 0
+
+    def health(self) -> bool:
+        return self._redis("PING") == ["PONG"]
 
 
 def run_demo(compose: Compose) -> None:
@@ -424,6 +577,8 @@ def run_demo(compose: Compose) -> None:
     postgres.setup()
     postgres.reset_poc_data()
     redis.reset_poc_data()
+    if not postgres.health() or not redis.health():
+        raise StoreCommandError("a configured store failed its health check")
 
     subject = "user:8842"
     policy = "customer-memory-30d-v1"
@@ -439,23 +594,27 @@ def run_demo(compose: Compose) -> None:
     )
     redis.remember("user:kept", "unrelated memory", policy, 2_592_000)
 
-    print("\nErasing user:8842 from every configured store", flush=True)
-    print("  PostgreSQL+pgvector …", flush=True)
-    postgres_receipt = postgres.forget_subject(subject)
-    print(f"  {postgres_receipt}", flush=True)
-    print("  Redis …", flush=True)
-    redis_receipt = redis.forget_subject(subject)
-    print(f"  {redis_receipt}", flush=True)
-    receipts = [postgres_receipt, redis_receipt]
+    request_id = f"demo-{uuid.uuid4()}"
+    coordinator = ErasureCoordinator([postgres, redis])
+    print(f"\nErasing user:8842 from every configured store ({request_id})", flush=True)
+    report = coordinator.erase_subject(subject, request_id)
+    for result in report.stores:
+        print(f"  {result}", flush=True)
+    print(f"  aggregate: {report.status.value} — {report.receipt}", flush=True)
 
-    complete = all(receipt.erased == len(memories) for receipt in receipts)
-    complete = complete and postgres.count_subject(subject) == 0
-    complete = complete and redis.count_subject(subject) == 0
+    replay = coordinator.erase_subject(subject, request_id)
+    idempotent = replay == report
+    complete = report.complete and all(
+        result.erased == len(memories) for result in report.stores
+    )
+    complete = complete and postgres.verify_subject_absent(subject)
+    complete = complete and redis.verify_subject_absent(subject)
     unrelated_survives = postgres.count_subject("user:kept") == 1
     unrelated_survives = unrelated_survives and redis.count_subject("user:kept") == 1
     print(f"\nCross-store erasure complete: {'yes' if complete else 'NO'}")
+    print(f"Idempotent request replay: {'yes' if idempotent else 'NO'}")
     print(f"Unrelated memory preserved: {'yes' if unrelated_survives else 'NO'}")
-    if not complete or not unrelated_survives:
+    if not complete or not idempotent or not unrelated_survives:
         raise StoreCommandError("the cross-store deletion invariant failed")
 
 
