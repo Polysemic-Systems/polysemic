@@ -658,21 +658,54 @@ impl fmt::Display for Resolution {
 /// The contestable constraint layer. Rules override the grown default per
 /// category — and every rule carries a reason, because an override without
 /// a reason is just a different unaccountable ontology.
+///
+/// Honest scope: this is a per-category override map with mandatory
+/// reasons, not a governance registry. It keeps no history, no owners,
+/// no timestamps, and no audit log; enacting a category replaces the
+/// previous rule. Those are the seams a real registry would fill.
 #[derive(Default)]
 pub struct Legislature {
     rules: BTreeMap<String, (String, String)>, // category → (value, reason)
 }
+
+/// Refusal to enact an unaccountable rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnactError {
+    /// The rule gave no reason. "Every rule carries a stated reason" is a
+    /// contract, not a suggestion — an empty reason is rejected, not stored.
+    EmptyReason,
+    /// The category is empty; a rule must govern something nameable.
+    EmptyCategory,
+}
+
+impl fmt::Display for EnactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EnactError::EmptyReason => write!(f, "a rule without a reason cannot be enacted"),
+            EnactError::EmptyCategory => write!(f, "a rule must name a non-empty category"),
+        }
+    }
+}
+
+impl std::error::Error for EnactError {}
 
 impl Legislature {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn enact(&mut self, category: &str, value: &str, reason: &str) {
+    pub fn enact(&mut self, category: &str, value: &str, reason: &str) -> Result<(), EnactError> {
+        if category.trim().is_empty() {
+            return Err(EnactError::EmptyCategory);
+        }
+        if reason.trim().is_empty() {
+            return Err(EnactError::EmptyReason);
+        }
         self.rules.insert(
             category.to_string(),
             (value.to_string(), reason.to_string()),
         );
+        Ok(())
     }
 
     /// Repealing a rule is as first-class as enacting one. (The forgetting
@@ -906,10 +939,22 @@ mod tests {
         let before = law.resolve("units", "imperial");
         assert_eq!(before.source, Source::Grown);
 
-        law.enact("units", "metric", "product ships in the EU");
+        law.enact("units", "metric", "product ships in the EU")
+            .expect("a reasoned rule enacts");
         let after = law.resolve("units", "imperial");
         assert_eq!(after.value, "metric");
         assert!(matches!(after.source, Source::Legislated { .. }));
+
+        // An override without a reason is refused, not stored.
+        assert_eq!(
+            law.enact("units", "imperial", "  "),
+            Err(EnactError::EmptyReason)
+        );
+        assert_eq!(
+            law.enact("", "metric", "why"),
+            Err(EnactError::EmptyCategory)
+        );
+        assert_eq!(law.resolve("units", "imperial").value, "metric");
 
         assert!(law.repeal("units"));
         assert_eq!(law.resolve("units", "imperial").value, "imperial");

@@ -171,17 +171,32 @@ impl Lethe {
     /// Recall memories matching `query` (substring on subject or content).
     /// Recall is use, and use is what keeps a memory alive: matches are
     /// touched and their salience reinforced.
+    ///
+    /// Expiry is enforced here, not just at sweep time: a memory past its
+    /// TTL or already faded below the floor is dead the moment you look —
+    /// it is never returned and never reinforced. TTL means "unavailable
+    /// after this deadline," not "eligible for eventual removal." Recall
+    /// can fight the fade only while a memory is still alive.
     pub fn recall(&mut self, query: &str, now: Instant) -> Vec<Memory> {
         let q = query.to_ascii_lowercase();
+        let half_life = self.half_life;
+        let floor = self.floor;
         let mut hits = Vec::new();
         for m in &mut self.entries {
+            if m.expired(now) {
+                continue;
+            }
+            let elapsed = now.saturating_duration_since(m.last_touch).as_secs_f64();
+            let hl = half_life.as_secs_f64().max(f64::EPSILON);
+            let decayed = m.salience * 0.5_f64.powf(elapsed / hl);
+            if decayed < floor {
+                continue;
+            }
             if m.subject.to_ascii_lowercase().contains(&q)
                 || m.content.to_ascii_lowercase().contains(&q)
             {
                 // decay first, then reinforce: recall fights the fade
-                let elapsed = now.saturating_duration_since(m.last_touch).as_secs_f64();
-                let hl = self.half_life.as_secs_f64().max(f64::EPSILON);
-                m.salience = (m.salience * 0.5_f64.powf(elapsed / hl) + 0.5).min(2.0);
+                m.salience = (decayed + 0.5).min(2.0);
                 m.last_touch = now;
                 hits.push(m.clone());
             }
@@ -286,6 +301,76 @@ mod tests {
     }
 
     #[test]
+    fn expired_memories_are_dead_to_recall_not_just_to_sweep() {
+        // Regression: recall used to return expired memories and reinforce
+        // them — resurrection through use. TTL means "unavailable after
+        // this deadline," enforced at read time, not only at sweep time.
+        let t0 = Instant::now();
+        let mut store = Lethe::new(secs(3600), 0.05);
+        store.remember("user:1", "prefers oat milk", secs(60), t0);
+
+        let after_expiry = t0 + secs(61);
+        assert!(
+            store.recall("oat", after_expiry).is_empty(),
+            "an expired memory must never be returned"
+        );
+        // Nor may the failed recall have reinforced it: the sweep still
+        // releases it as expired.
+        let swept = store.sweep(after_expiry);
+        assert_eq!(
+            swept,
+            Swept {
+                expired: 1,
+                faded: 0
+            }
+        );
+    }
+
+    #[test]
+    fn faded_memories_are_not_resurrected_by_recall() {
+        // Half-life of 60s and a floor of 0.4: after ~2 half-lives the
+        // effective salience (1.0 -> 0.25) is below the floor, so the
+        // memory is forgettable and recall must not revive it.
+        let t0 = Instant::now();
+        let mut store = Lethe::new(secs(60), 0.4);
+        store.remember("user:1", "fleeting thought", secs(10_000), t0);
+
+        assert!(
+            store.recall("fleeting", t0 + secs(120)).is_empty(),
+            "a faded memory must not be revived by recall"
+        );
+        let swept = store.sweep(t0 + secs(120));
+        assert_eq!(
+            swept,
+            Swept {
+                expired: 0,
+                faded: 1
+            }
+        );
+    }
+
+    #[test]
+    fn recall_still_fights_the_fade_while_alive() {
+        let t0 = Instant::now();
+        let mut store = Lethe::new(secs(60), 0.4);
+        store.remember("user:1", "fleeting thought", secs(10_000), t0);
+
+        // One half-life in: salience 0.5, still above the floor — recall
+        // returns it and reinforces it back up.
+        assert_eq!(store.recall("fleeting", t0 + secs(60)).len(), 1);
+        // The reinforcement bought it time: two half-lives after the
+        // recall it would have faded from 1.0, but not from 1.0 refreshed.
+        let swept = store.sweep(t0 + secs(120));
+        assert_eq!(
+            swept,
+            Swept {
+                expired: 0,
+                faded: 0
+            }
+        );
+    }
+
+    #[test]
     fn ttl_expiry_is_swept() {
         let t0 = Instant::now();
         let mut store = Lethe::new(secs(3600), 0.05);
@@ -359,12 +444,13 @@ mod tests {
         let mut store = Lethe::new(secs(10), 0.05);
         store.remember("user:1", "prefers oat milk", secs(100_000), t0);
 
-        // touch it at t+50 → reinforced, clock reset
-        let hits = store.recall("oat", t0 + secs(50));
+        // touch it at t+30 (3 half-lives, salience 0.125 — still alive)
+        // → reinforced, clock reset
+        let hits = store.recall("oat", t0 + secs(30));
         assert_eq!(hits.len(), 1);
 
-        // at t+60 only 10s have passed since touch → survives
-        let swept = store.sweep(t0 + secs(60));
+        // at t+40 only 10s have passed since touch → survives
+        let swept = store.sweep(t0 + secs(40));
         assert_eq!(
             swept,
             Swept {
@@ -373,6 +459,10 @@ mod tests {
             }
         );
         assert_eq!(store.len(), 1);
+
+        // but once it has faded below the floor, recall cannot resurrect
+        // it: use keeps memories alive, it does not raise the dead.
+        assert!(store.recall("oat", t0 + secs(200)).is_empty());
     }
 
     #[test]

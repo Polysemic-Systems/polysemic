@@ -55,11 +55,18 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// Deepest permitted container nesting. This parser sits at the boundary
+/// where untrusted model output arrives; a recursive descent without a depth
+/// bound can be crashed with a few kilobytes of `[`. Refusing pathological
+/// nesting is a named limit, not a silent one.
+pub const MAX_DEPTH: usize = 128;
+
 /// Strictly parse a JSON document. Trailing content is an error.
 pub fn parse(input: &str) -> Result<Value, ParseError> {
     let mut p = Parser {
         b: input.as_bytes(),
         i: 0,
+        depth: 0,
     };
     p.ws();
     let v = p.value()?;
@@ -73,6 +80,7 @@ pub fn parse(input: &str) -> Result<Value, ParseError> {
 struct Parser<'a> {
     b: &'a [u8],
     i: usize,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -81,6 +89,14 @@ impl<'a> Parser<'a> {
             at: self.i,
             msg: msg.to_string(),
         }
+    }
+
+    fn descend(&mut self) -> Result<(), ParseError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(self.err(&format!("nesting deeper than {MAX_DEPTH} levels")));
+        }
+        Ok(())
     }
 
     fn peek(&self) -> Option<u8> {
@@ -260,10 +276,12 @@ impl<'a> Parser<'a> {
 
     fn array(&mut self) -> Result<Value, ParseError> {
         self.i += 1; // '['
+        self.descend()?;
         let mut items = Vec::new();
         self.ws();
         if self.peek() == Some(b']') {
             self.i += 1;
+            self.depth -= 1;
             return Ok(Value::Arr(items));
         }
         loop {
@@ -274,6 +292,7 @@ impl<'a> Parser<'a> {
                 Some(b',') => self.i += 1,
                 Some(b']') => {
                     self.i += 1;
+                    self.depth -= 1;
                     return Ok(Value::Arr(items));
                 }
                 _ => return Err(self.err("expected `,` or `]` in array")),
@@ -283,10 +302,12 @@ impl<'a> Parser<'a> {
 
     fn object(&mut self) -> Result<Value, ParseError> {
         self.i += 1; // '{'
+        self.descend()?;
         let mut map = BTreeMap::new();
         self.ws();
         if self.peek() == Some(b'}') {
             self.i += 1;
+            self.depth -= 1;
             return Ok(Value::Obj(map));
         }
         loop {
@@ -310,6 +331,7 @@ impl<'a> Parser<'a> {
                 Some(b',') => self.i += 1,
                 Some(b'}') => {
                     self.i += 1;
+                    self.depth -= 1;
                     return Ok(Value::Obj(map));
                 }
                 _ => return Err(self.err("expected `,` or `}` in object")),
@@ -410,6 +432,24 @@ fn write_json_string(f: &mut fmt::Formatter<'_>, s: &str) -> fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pathological_nesting_is_refused_not_a_stack_overflow() {
+        let deep = "[".repeat(20_000) + &"]".repeat(20_000);
+        let err = parse(&deep).expect_err("must refuse, not crash");
+        assert!(err.msg.contains("nesting deeper"), "err: {}", err.msg);
+
+        let fine = "[".repeat(MAX_DEPTH) + &"]".repeat(MAX_DEPTH);
+        assert!(parse(&fine).is_ok(), "the named limit itself must parse");
+        let over = "[".repeat(MAX_DEPTH + 1) + &"]".repeat(MAX_DEPTH + 1);
+        assert!(parse(&over).is_err());
+    }
+
+    #[test]
+    fn siblings_do_not_accumulate_depth() {
+        let wide = format!("[{}]", vec!["[[1]]"; 200].join(","));
+        assert!(parse(&wide).is_ok(), "breadth must not count as depth");
+    }
 
     #[test]
     fn parses_and_roundtrips() {
