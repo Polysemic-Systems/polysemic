@@ -100,7 +100,8 @@ fn main() {
     println!("   {}", grown_ontology.compare(&observed_ontology));
 
     let mut law = Legislature::new();
-    law.enact("units", "metric", "product ships in the EU");
+    law.enact("units", "metric", "product ships in the EU")
+        .expect("rule carries a reason");
     println!(
         "   resolve(\"units\") → {}",
         law.resolve("units", "imperial")

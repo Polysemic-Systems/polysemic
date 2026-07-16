@@ -485,9 +485,14 @@ fn schema_error(path: &str, message: &str) -> SchemaError {
 /// only when the text is unrecoverable even after every named repair pass.
 pub fn digest(raw: &str, schema: &Schema) -> Result<Digestion, ParseError> {
     let mut repairs = Vec::new();
-    let value = parse_leniently(raw, &mut repairs)?;
-
-    Ok(check_value(value, schema, repairs, Vec::new()))
+    match parse_leniently(raw, &mut repairs)? {
+        Lenient::One(value) => Ok(check_value(value, schema, repairs, Vec::new())),
+        Lenient::Many(documents) => Ok(Digestion {
+            outcome: Outcome::Clarify(vec![multi_document_question(&documents)]),
+            repairs,
+            answers: Vec::new(),
+        }),
+    }
 }
 
 /// Apply answers only to ambiguities Digest actually raised, then validate
@@ -499,7 +504,34 @@ pub fn digest_with_answers(
     answers: impl IntoIterator<Item = Answer>,
 ) -> Result<Digestion, AnswerError> {
     let mut repairs = Vec::new();
-    let mut value = parse_leniently(raw, &mut repairs)?;
+    let mut value = match parse_leniently(raw, &mut repairs)? {
+        Lenient::One(value) => value,
+        Lenient::Many(documents) => {
+            // The only question the boundary raised is "which document?";
+            // an answer at `$` is the human choosing one. Any other path
+            // was never requested.
+            let mut chosen = None;
+            let mut applied = Vec::new();
+            for answer in answers {
+                if answer.path != "$" {
+                    return Err(AnswerError::NotRequested { path: answer.path });
+                }
+                if chosen.is_some() {
+                    return Err(AnswerError::Duplicate { path: answer.path });
+                }
+                chosen = Some(answer.value.clone());
+                applied.push(answer);
+            }
+            return Ok(match chosen {
+                Some(value) => check_value(value, schema, repairs, applied),
+                None => Digestion {
+                    outcome: Outcome::Clarify(vec![multi_document_question(&documents)]),
+                    repairs,
+                    answers: applied,
+                },
+            });
+        }
+    };
 
     let mut probe_repairs = repairs.clone();
     let mut questions = Vec::new();
@@ -638,18 +670,109 @@ fn descend<'a>(value: &'a mut Value, segment: &PathSegment) -> Option<&'a mut Va
 // Repair pipeline — parse leniently, log every act
 // ---------------------------------------------------------------------------
 
-fn parse_leniently(raw: &str, repairs: &mut Vec<Repair>) -> Result<Value, ParseError> {
+/// The lenient parse either yields one value or refuses to choose between
+/// several complete documents: dropping all but the first would be silent
+/// loss wearing a `stripped_prose` label.
+enum Lenient {
+    One(Value),
+    Many(Vec<String>),
+}
+
+fn multi_document_question(documents: &[String]) -> Question {
+    Question {
+        path: "$".to_string(),
+        prompt: format!(
+            "the input contains {} complete JSON documents — which one did they mean?",
+            documents.len()
+        ),
+        candidates: documents.to_vec(),
+    }
+}
+
+/// Find every complete balanced JSON span in `text`, in order. Only spans
+/// that survive the repair pipeline on their own count as documents, so
+/// prose braces ("{see above}") do not trigger false ambiguity.
+fn balanced_documents(text: &str) -> Vec<String> {
+    let mut documents = Vec::new();
+    let mut from = 0;
+    while let Some(open_rel) = text[from..].find(['{', '[']) {
+        let open = from + open_rel;
+        let bytes = text.as_bytes();
+        let mut scan = Scan {
+            b: bytes,
+            i: open,
+            in_str: false,
+        };
+        let mut depth = 0usize;
+        let mut end = None;
+        while let Some(c) = scan.step() {
+            if scan.in_str {
+                continue;
+            }
+            match c {
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(scan.i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else { break };
+        let span = text[open..end].to_string();
+        if repair_pipeline(&span, &mut Vec::new()).is_ok() {
+            documents.push(span);
+        }
+        from = end;
+    }
+    documents
+}
+
+fn parse_leniently(raw: &str, repairs: &mut Vec<Repair>) -> Result<Lenient, ParseError> {
     if let Ok(v) = parse(raw) {
+        return Ok(Lenient::One(v));
+    }
+
+    // A fenced block is one declared document; strip the fence before asking
+    // whether the remainder holds several.
+    let mut text = raw.to_string();
+    if let Some(stripped) = strip_fences(&text) {
+        if stripped != text {
+            text = stripped;
+            repairs.push(Repair::StrippedFence);
+            if let Ok(v) = parse(&text) {
+                return Ok(Lenient::One(v));
+            }
+        }
+    }
+
+    let documents = balanced_documents(&text);
+    if documents.len() > 1 {
+        return Ok(Lenient::Many(documents));
+    }
+
+    repair_pipeline(&text, repairs).map(Lenient::One)
+}
+
+fn repair_pipeline(input: &str, repairs: &mut Vec<Repair>) -> Result<Value, ParseError> {
+    if let Ok(v) = parse(input) {
         return Ok(v);
     }
 
-    let mut text = raw.to_string();
+    let mut text = input.to_string();
     type RepairPass = fn(&str) -> Option<String>;
+    // Requoting runs before the Python-literal pass so that words like
+    // `True` inside single-quoted user strings become protected string
+    // content instead of being rewritten — repairing quotes must never
+    // corrupt the text the quotes carry.
     let passes: [(RepairPass, Repair); 5] = [
         (strip_fences, Repair::StrippedFence),
         (extract_json, Repair::StrippedProse),
-        (python_literals, Repair::PythonLiterals),
         (requote_strings, Repair::RequotedStrings),
+        (python_literals, Repair::PythonLiterals),
         (quote_bare_keys, Repair::QuotedKeys),
     ];
 
@@ -1031,12 +1154,30 @@ fn check(
                 return Value::Str(s);
             }
             let folded = s.trim().to_ascii_lowercase();
-            if let Some(hit) = opts.iter().find(|o| o.to_ascii_lowercase() == folded) {
-                repairs.push(Repair::CaseFolded {
-                    path: path.to_string(),
-                    original: s.clone(),
-                });
-                return Value::Str(hit.clone());
+            let hits: Vec<&String> = opts
+                .iter()
+                .filter(|o| o.to_ascii_lowercase() == folded)
+                .collect();
+            match hits.as_slice() {
+                // exactly one option matches ignoring case: an honest repair
+                [hit] => {
+                    repairs.push(Repair::CaseFolded {
+                        path: path.to_string(),
+                        original: s.clone(),
+                    });
+                    return Value::Str((*hit).clone());
+                }
+                // several options differ only by case: choosing the first
+                // declared one would be a coin flip wearing a repair label
+                [_, _, ..] => {
+                    questions.push(Question {
+                        path: path.to_string(),
+                        prompt: format!("{s:?} matches more than one option ignoring case"),
+                        candidates: hits.into_iter().cloned().collect(),
+                    });
+                    return Value::Null;
+                }
+                [] => {}
             }
             questions.push(Question {
                 path: path.to_string(),
@@ -1400,6 +1541,69 @@ mod tests {
             Field::req("qty", Schema::num_range(1.0, 99.0)),
             Field::opt("gift_wrap", Schema::Bool),
         ])
+    }
+
+    #[test]
+    fn repairing_quotes_never_corrupts_the_text_the_quotes_carry() {
+        // Regression: `python_literals` used to run before requoting and
+        // rewrote `True` inside a single-quoted user string.
+        let raw = "{'item': 'True love espresso', 'qty': 2}";
+        let d = digest(raw, &order_schema()).unwrap();
+        let Outcome::Resolved(value) = d.outcome else {
+            panic!("expected resolved");
+        };
+        let obj = value.as_obj().unwrap();
+        assert_eq!(obj["item"], Value::Str("True love espresso".into()));
+    }
+
+    #[test]
+    fn a_second_document_is_a_question_not_silent_loss() {
+        let raw = r#"{"item":"espresso","qty":2} {"item":"tea","qty":9}"#;
+        let d = digest(raw, &order_schema()).unwrap();
+        let Outcome::Clarify(questions) = d.outcome else {
+            panic!("choosing one document silently drops the other");
+        };
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].path, "$");
+        assert_eq!(questions[0].candidates.len(), 2);
+        assert!(questions[0].candidates[1].contains("tea"));
+
+        // The human's answer at `$` selects a document and resolves.
+        let chosen = parse(&questions[0].candidates[1]).unwrap();
+        let d = digest_with_answers(raw, &order_schema(), [Answer::new("$", chosen)]).unwrap();
+        let Outcome::Resolved(value) = d.outcome else {
+            panic!("expected resolved after choosing");
+        };
+        assert_eq!(
+            value.as_obj().unwrap()["item"],
+            Value::Str("tea".to_string())
+        );
+        assert_eq!(d.answers.len(), 1);
+    }
+
+    #[test]
+    fn prose_braces_do_not_trigger_false_document_ambiguity() {
+        let raw = "Here you go: {\"item\": \"espresso\", \"qty\": 2} {enjoy your day}";
+        let d = digest(raw, &order_schema()).unwrap();
+        assert!(d.is_resolved(), "outcome: {:?}", d.outcome);
+    }
+
+    #[test]
+    fn case_folding_between_two_options_is_a_question_not_a_coin_flip() {
+        let schema = Schema::obj([Field::req(
+            "mode",
+            Schema::choice(["Read", "read", "write"]),
+        )]);
+        // Unique case-insensitive match still folds, with a repair.
+        let d = digest(r#"{"mode": "WRITE"}"#, &schema).unwrap();
+        assert!(d.is_resolved());
+        assert!(matches!(d.repairs.last(), Some(Repair::CaseFolded { .. })));
+        // Two declared options differing only by case: ask, never pick.
+        let d = digest(r#"{"mode": "READ"}"#, &schema).unwrap();
+        let Outcome::Clarify(questions) = d.outcome else {
+            panic!("expected clarify");
+        };
+        assert_eq!(questions[0].candidates, vec!["Read", "read"]);
     }
 
     #[test]
