@@ -397,13 +397,26 @@ class PostgresStore:
             FROM deleted
             ORDER BY id;
             """)
+        deleted = _parse_deleted(output)
+        # Observe absence instead of trusting the deletion response: a swept
+        # row that survived would still satisfy this predicate, because its
+        # expiry can only recede further into the past.
+        remaining = int(
+            self._psql(
+                """
+                SELECT count(*)
+                FROM lethe_memories
+                WHERE expires_at <= clock_timestamp();
+                """
+            ).strip()
+        )
         return SweepOutcome(
             _receipt(
                 self.STORE_NAME,
                 f"sweep:{int(time.time())}",
                 "expired",
-                _parse_deleted(output),
-                verified_absent=True,
+                deleted,
+                verified_absent=remaining == 0,
             )
         )
 
@@ -662,13 +675,19 @@ class RedisStore:
             raise StoreCommandError("Redis sweep returned no result")
         missed = int(lines[0])
         deleted = _parse_redis_deleted(lines[1:])
+        swept_keys = [line for line in lines[1:] if line][::3]
+        # Observe absence instead of trusting the deletion response: the
+        # swept keys must be gone and no due entry may remain in the index.
+        verified = self._redis("ZCOUNT", REDIS_EXPIRIES, "-inf", str(now)) == ["0"]
+        if verified and swept_keys:
+            verified = self._redis("EXISTS", *swept_keys) == ["0"]
         return SweepOutcome(
             _receipt(
                 self.STORE_NAME,
                 f"sweep:{now}",
                 "expired",
                 deleted,
-                verified_absent=True,
+                verified_absent=verified,
             ),
             missed,
         )
