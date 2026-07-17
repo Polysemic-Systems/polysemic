@@ -115,6 +115,24 @@ class ReceiptTests(unittest.TestCase):
         )
         self.assertEqual(store.erase_subject("user:1", "request-1"), receipt)
 
+    def test_postgres_sweep_receipt_verifies_no_expired_rows_remain(self):
+        compose = FakeCompose(["id-1|YQ==|cDE=\n", "0\n"])
+        store = lethe_poc.PostgresStore(compose)
+
+        outcome = store.sweep()
+
+        self.assertEqual(outcome.receipt.erased, 1)
+        self.assertTrue(outcome.receipt.verified_absent)
+        self.assertIn("expires_at <= clock_timestamp()", compose.calls[-1][2])
+
+    def test_postgres_sweep_receipt_reports_surviving_expired_rows_as_unverified(self):
+        compose = FakeCompose(["id-1|YQ==|cDE=\n", "1\n"])
+        store = lethe_poc.PostgresStore(compose)
+
+        outcome = store.sweep()
+
+        self.assertFalse(outcome.receipt.verified_absent)
+
     def test_postgres_aggregate_claim_precedes_store_deletion(self):
         digest = lethe_poc.subject_commitment("user:1")
         compose = FakeCompose([f"{digest}\n"])
@@ -189,13 +207,33 @@ class ReceiptTests(unittest.TestCase):
         self.assertNotIn(lethe_poc.REDIS_FORGET_LUA, compose.calls[0][1])
 
     def test_redis_sweep_reports_memories_lost_to_hard_expiry(self):
-        compose = FakeCompose(["2\nlethe:memory:id-1\nYQ==\ncDE=\n"])
+        compose = FakeCompose(["2\nlethe:memory:id-1\nYQ==\ncDE=\n", "0", "0"])
         store = lethe_poc.RedisStore(compose)
 
         outcome = store.sweep(now_epoch_seconds=100)
 
         self.assertEqual(outcome.receipt.erased, 1)
         self.assertEqual(outcome.unreceipted_expirations, 2)
+        self.assertTrue(outcome.receipt.verified_absent)
+        exists_call = compose.calls[-1][1]
+        self.assertIn("EXISTS", exists_call)
+        self.assertIn("lethe:memory:id-1", exists_call)
+
+    def test_redis_sweep_receipt_reports_a_surviving_key_as_unverified(self):
+        compose = FakeCompose(["0\nlethe:memory:id-1\nYQ==\ncDE=\n", "0", "1"])
+        store = lethe_poc.RedisStore(compose)
+
+        outcome = store.sweep(now_epoch_seconds=100)
+
+        self.assertFalse(outcome.receipt.verified_absent)
+
+    def test_redis_sweep_receipt_reports_a_still_due_index_as_unverified(self):
+        compose = FakeCompose(["0\nlethe:memory:id-1\nYQ==\ncDE=\n", "1"])
+        store = lethe_poc.RedisStore(compose)
+
+        outcome = store.sweep(now_epoch_seconds=100)
+
+        self.assertFalse(outcome.receipt.verified_absent)
 
     def test_malformed_store_output_is_rejected(self):
         with self.assertRaises(lethe_poc.StoreCommandError):
