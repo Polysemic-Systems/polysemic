@@ -401,15 +401,11 @@ class PostgresStore:
         # Observe absence instead of trusting the deletion response: a swept
         # row that survived would still satisfy this predicate, because its
         # expiry can only recede further into the past.
-        remaining = int(
-            self._psql(
-                """
+        remaining = int(self._psql("""
                 SELECT count(*)
                 FROM lethe_memories
                 WHERE expires_at <= clock_timestamp();
-                """
-            ).strip()
-        )
+                """).strip())
         return SweepOutcome(
             _receipt(
                 self.STORE_NAME,
