@@ -46,6 +46,12 @@ pub enum Repair {
     HedgeResolved { path: String, original: String },
     /// Matched an enum variant case-insensitively at `path`.
     CaseFolded { path: String, original: String },
+    /// Dropped an explicit null at `path`, an optional field whose declared
+    /// schema cannot hold null. There null and omission assert the same
+    /// thing — no value here — so the drop applies the declared schema
+    /// semantics instead of asking about a stated absence. Fields typed
+    /// [`Schema::Any`] admit null as a value, so null passes through there.
+    DroppedNullOptional { path: String },
 }
 
 impl fmt::Display for Repair {
@@ -66,6 +72,9 @@ impl fmt::Display for Repair {
             Repair::CaseFolded { path, original } => {
                 write!(f, "case-folded {path}: {original:?}")
             }
+            Repair::DroppedNullOptional { path } => {
+                write!(f, "dropped null at {path}: optional field left unset")
+            }
         }
     }
 }
@@ -84,6 +93,7 @@ impl Repair {
             Repair::Coerced { .. } => "coerced",
             Repair::HedgeResolved { .. } => "hedge_resolved",
             Repair::CaseFolded { .. } => "case_folded",
+            Repair::DroppedNullOptional { .. } => "dropped_null_optional",
         }
     }
 }
@@ -1200,6 +1210,16 @@ fn check(
             for field in fields {
                 let fpath = format!("{path}.{}", field.name);
                 match map.remove(&field.name) {
+                    // When the declared schema cannot hold null, an explicit
+                    // null on an optional field says what omitting the key
+                    // says. Drop it — named, not silent — rather than asking
+                    // the human to disambiguate a stated absence. Schema::Any
+                    // admits null as a value, so it takes the pass-through arm.
+                    Some(Value::Null)
+                        if !field.required && !matches!(field.schema, Schema::Any) =>
+                    {
+                        repairs.push(Repair::DroppedNullOptional { path: fpath });
+                    }
                     Some(v) => {
                         out.insert(
                             field.name.clone(),
@@ -1613,6 +1633,62 @@ mod tests {
         assert!(d.is_resolved());
         assert!(d.repairs.contains(&Repair::StrippedFence));
         assert!(d.repairs.contains(&Repair::RemovedTrailingCommas));
+    }
+
+    #[test]
+    fn null_on_an_optional_field_is_a_named_drop_not_a_question() {
+        // Null and omission assert the same thing for an optional field, so
+        // the drop is ledgered rather than asked about.
+        let raw = r#"{"item": "espresso", "qty": 2, "gift_wrap": null}"#;
+        let d = digest(raw, &order_schema()).unwrap();
+        let Outcome::Resolved(value) = &d.outcome else {
+            panic!("expected resolved, not a question about a stated absence");
+        };
+        assert!(value.as_obj().unwrap().get("gift_wrap").is_none());
+        assert!(
+            d.repairs.contains(&Repair::DroppedNullOptional {
+                path: "$.gift_wrap".to_string()
+            }),
+            "repairs: {:?}",
+            d.repairs
+        );
+    }
+
+    #[test]
+    fn null_on_an_optional_any_field_is_a_preserved_value_not_a_drop() {
+        // Schema::Any admits null as a value, so an explicit null there is
+        // data, not a stated absence — dropping it would be loss wearing a
+        // repair's name.
+        let schema = Schema::obj([
+            Field::req("item", Schema::Str),
+            Field::opt("note", Schema::Any),
+        ]);
+        let raw = r#"{"item": "espresso", "note": null}"#;
+        let d = digest(raw, &schema).unwrap();
+        let Outcome::Resolved(value) = &d.outcome else {
+            panic!("expected resolved");
+        };
+        assert_eq!(value.as_obj().unwrap().get("note"), Some(&Value::Null));
+        assert!(
+            !d.repairs
+                .iter()
+                .any(|r| matches!(r, Repair::DroppedNullOptional { .. })),
+            "repairs: {:?}",
+            d.repairs
+        );
+    }
+
+    #[test]
+    fn tri_state_null_schemas_are_rejected_at_the_boundary_not_mismodeled() {
+        // Patch-style semantics (omitted = unchanged, null = clear) need a
+        // nullable type this language deliberately cannot express. The
+        // spelling must fail loudly at schema load, never silently collapse
+        // into optional-and-droppable.
+        let err = Schema::from_json_schema(
+            r#"{"type": "object", "properties": {"col": {"type": ["string", "null"]}}}"#,
+        )
+        .expect_err("nullable union types must not load");
+        assert!(err.path.contains("col"), "path: {}", err.path);
     }
 
     #[test]
